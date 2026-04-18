@@ -1,0 +1,6 @@
+## Append samples of your project ##
+resources:
+- conveyor_v1alpha1_task.yaml
+- conveyor_v1alpha1_clusteragentclass.yaml
+- conveyor_v1alpha1_clustertriggerclass.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

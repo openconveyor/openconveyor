@@ -1,0 +1,49 @@
+# GitHub Issues → implementer Task.
+#
+# Fires on issues.labeled events where the label is `conveyor:ready`, so
+# a human still gates dispatch by labeling. Uses issue.body as the prompt;
+# fall back to issue.title for terse tickets where the body is empty.
+apiVersion: openconveyor.ai/v1alpha1
+kind: ClusterTriggerClass
+metadata:
+  name: github-issues-implementer
+spec:
+  path: /github/issues
+  signature:
+    header: X-Hub-Signature-256
+    algorithm: sha256
+    prefix: "sha256="
+    secretRef:
+      name: github-webhook
+      key: secret
+  filters:
+    - path: action
+      equals: labeled
+    - path: label.name
+      equals: "conveyor:ready"
+  task:
+    namespace: conveyor-tasks
+    generateNamePrefix: gh-issue-
+    agent:
+      ref: claude-code-implementer
+    permissions:
+      secrets:
+        - github-token
+      egress:
+        - api.github.com
+        - github.com
+    resources:
+      cpu: "1"
+      memory: 1Gi
+      timeout: 30m
+    mappings:
+      - from: issue.body
+        to: prompt
+        default: "See issue — no body supplied"
+      - from: repository.full_name
+        to: annotations.openconveyor.ai/repo
+      - from: issue.number
+        to: labels.openconveyor.ai/issue-number
+      - from: sender.login
+        to: annotations.openconveyor.ai/requested-by
+        default: unknown

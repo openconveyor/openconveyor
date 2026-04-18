@@ -1,0 +1,25 @@
+# Standalone Task template for the "my laptop is a trigger" flow.
+# Either apply this directly with `kubectl apply -f task-template.yaml`
+# after substituting $PROMPT, or use the matching `/conveyor` Claude
+# Code slash command in `commands/conveyor.md`.
+apiVersion: openconveyor.ai/v1alpha1
+kind: Task
+metadata:
+  generateName: cc-dispatch-
+  namespace: conveyor-tasks
+spec:
+  agent:
+    ref: claude-code-implementer
+  prompt:
+    inline: |
+      $PROMPT
+  permissions:
+    secrets:
+      - github-token
+    egress:
+      - api.github.com
+      - github.com
+  resources:
+    cpu: "1"
+    memory: 1Gi
+    timeout: 30m

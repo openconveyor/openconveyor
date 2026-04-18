@@ -1,0 +1,27 @@
+# Minimal Task hitting the implementer agent. Permissions here union with
+# ClusterAgentClass.spec.requires — no need to repeat api.anthropic.com
+# or anthropic-api-key; they come from the AgentClass.
+apiVersion: openconveyor.ai/v1alpha1
+kind: Task
+metadata:
+  labels:
+    app.kubernetes.io/name: conveyor
+    app.kubernetes.io/managed-by: kustomize
+  name: task-sample
+spec:
+  agent:
+    ref: claude-code-implementer
+  prompt:
+    inline: |
+      Fix the nil-pointer dereference on line 42 of foo.go and open a PR
+      against the `main` branch.
+  permissions:
+    secrets:
+      - github-token
+    egress:
+      - api.github.com
+      - github.com
+  resources:
+    cpu: "1"
+    memory: 1Gi
+    timeout: 30m

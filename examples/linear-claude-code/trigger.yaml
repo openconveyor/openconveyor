@@ -1,0 +1,54 @@
+# Linear → implementer Task.
+#
+# Fires when an Issue transitions into the "Ready for Agent" workflow
+# state. In Linear terms that is: type=Issue, action=update, and
+# data.state.name matches. Adjust the state name to whatever you use.
+#
+# Linear signs webhooks with a raw hex HMAC-SHA256 in `Linear-Signature`
+# — no "sha256=" prefix.
+apiVersion: openconveyor.ai/v1alpha1
+kind: ClusterTriggerClass
+metadata:
+  name: linear-implementer
+spec:
+  path: /linear
+  signature:
+    header: Linear-Signature
+    algorithm: sha256
+    # Linear does not prefix the signature.
+    prefix: ""
+    secretRef:
+      name: linear-webhook
+      key: secret
+  filters:
+    - path: type
+      equals: Issue
+    - path: action
+      equals: update
+    - path: data.state.name
+      equals: "Ready for Agent"
+  task:
+    namespace: conveyor-tasks
+    generateNamePrefix: linear-
+    agent:
+      ref: claude-code-implementer
+    permissions:
+      secrets:
+        - github-token
+      egress:
+        - api.github.com
+        - github.com
+    resources:
+      cpu: "1"
+      memory: 1Gi
+      timeout: 30m
+    mappings:
+      # Linear issue descriptions are Markdown and carry the bulk of intent.
+      - from: data.description
+        to: prompt
+        default: "See Linear issue — no description supplied"
+      - from: data.identifier
+        to: labels.openconveyor.ai/linear-id
+      - from: data.title
+        to: annotations.openconveyor.ai/linear-title
+        default: ""

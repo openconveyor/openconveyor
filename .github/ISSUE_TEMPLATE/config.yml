@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/openconveyor/openconveyor/security/advisories/new
+    about: Do not open a public issue. Use a private security advisory.
+  - name: Question or discussion
+    url: https://github.com/openconveyor/openconveyor/discussions
+    about: Open-ended questions and design discussion belong in Discussions.

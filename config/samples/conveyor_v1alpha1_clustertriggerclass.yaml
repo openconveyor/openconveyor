@@ -1,0 +1,50 @@
+# Reference ClusterTriggerClass: GitHub Issues → implementer Task.
+# Fires only when an issue is labeled `conveyor:ready`, so a human still
+# gates dispatch. The "issue.title" path is used as the prompt; a real
+# deployment probably wants issue.body instead.
+apiVersion: openconveyor.ai/v1alpha1
+kind: ClusterTriggerClass
+metadata:
+  labels:
+    app.kubernetes.io/name: conveyor
+    app.kubernetes.io/managed-by: kustomize
+  name: github-issues
+spec:
+  path: /github
+  signature:
+    header: X-Hub-Signature-256
+    algorithm: sha256
+    prefix: "sha256="
+    secretRef:
+      # The Secret must live in the adapter's namespace (flag
+      # --trigger-namespace, defaults to conveyor-system).
+      name: github-webhook
+      key: secret
+  filters:
+    - path: action
+      equals: labeled
+    - path: label.name
+      equals: "conveyor:ready"
+  task:
+    namespace: conveyor-tasks
+    generateNamePrefix: gh-issue-
+    agent:
+      ref: claude-code-implementer
+    permissions:
+      secrets:
+        - github-token
+      egress:
+        - api.github.com
+        - github.com
+    resources:
+      cpu: "1"
+      memory: 1Gi
+      timeout: 30m
+    mappings:
+      - from: issue.title
+        to: prompt
+      - from: issue.number
+        to: labels.openconveyor.ai/issue-number
+      - from: sender.login
+        to: annotations.openconveyor.ai/requested-by
+        default: unknown
