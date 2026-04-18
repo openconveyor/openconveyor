@@ -75,7 +75,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusBadRequest, "read body: "+err.Error())
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	if !json.Valid(body) {
 		writeStatus(w, http.StatusBadRequest, "body is not valid JSON")

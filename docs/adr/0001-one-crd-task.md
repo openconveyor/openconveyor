@@ -51,4 +51,3 @@ CRs per event.
 ## References
 
 - `api/v1alpha1/task_types.go`
-- Plan: `/home/martijn/.claude/plans/hazy-shimmying-umbrella.md`

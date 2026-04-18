@@ -85,7 +85,8 @@ func main() {
 	flag.StringVar(&triggerAddr, "trigger-bind-address", "",
 		"Address for the webhook trigger adapter (e.g. :9090). Leave blank to disable the trigger server.")
 	flag.StringVar(&triggerNamespace, "trigger-namespace", "",
-		"Namespace where HMAC Secrets referenced by ClusterTriggerClass live. Defaults to POD_NAMESPACE or \"conveyor-system\".")
+		"Namespace where HMAC Secrets referenced by ClusterTriggerClass live. "+
+			"Defaults to POD_NAMESPACE or \"conveyor-system\".")
 	opts := zap.Options{
 		Development: true,
 	}

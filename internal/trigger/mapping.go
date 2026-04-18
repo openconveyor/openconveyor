@@ -51,10 +51,10 @@ func BuildTask(tmpl conveyorv1alpha1.TaskTemplate, body []byte) (*conveyorv1alph
 	if prefix == "" {
 		prefix = "task-"
 	}
-	task.ObjectMeta.GenerateName = prefix
+	task.GenerateName = prefix
 
 	if tmpl.Namespace != "" {
-		task.ObjectMeta.Namespace = tmpl.Namespace
+		task.Namespace = tmpl.Namespace
 	}
 
 	for _, m := range tmpl.Mappings {
@@ -100,8 +100,8 @@ func applyMapping(task *conveyorv1alpha1.Task, to, value string) error {
 	case to == "prompt":
 		task.Spec.Prompt.Inline = value
 	case to == "name":
-		task.ObjectMeta.Name = value
-		task.ObjectMeta.GenerateName = ""
+		task.Name = value
+		task.GenerateName = ""
 	case strings.HasPrefix(to, "labels."):
 		setMetaString(&task.ObjectMeta, "labels", strings.TrimPrefix(to, "labels."), value)
 	case strings.HasPrefix(to, "annotations."):

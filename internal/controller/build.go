@@ -8,6 +8,8 @@ you may not use this file except in compliance with the License.
 package controller
 
 import (
+	"maps"
+
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -66,7 +68,7 @@ func buildJob(
 	agent *conveyorv1alpha1.ClusterAgentClass,
 	effectiveSecrets []string,
 ) (*batchv1.Job, error) {
-	timeoutSeconds := int64(task.Spec.Resources.Timeout.Duration.Seconds())
+	timeoutSeconds := int64(task.Spec.Resources.Timeout.Seconds())
 	backoffLimit := int32(0)
 	ttl := defaultTTLSeconds
 	runAsNonRoot := true
@@ -195,9 +197,7 @@ func podLabels(task *conveyorv1alpha1.Task) map[string]string {
 	labels["app.kubernetes.io/component"] = "task"
 	// PodSelectorLabels is already a subset of OwnershipLabels, but be
 	// explicit in case the policy package splits them in the future.
-	for k, v := range policy.PodSelectorLabels(task.Name) {
-		labels[k] = v
-	}
+	maps.Copy(labels, policy.PodSelectorLabels(task.Name))
 	return labels
 }
 

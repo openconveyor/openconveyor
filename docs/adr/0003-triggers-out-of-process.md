@@ -68,6 +68,4 @@ This means:
 
 ## References
 
-- Plan: section "Plugin Interfaces" in
-  `/home/martijn/.claude/plans/hazy-shimmying-umbrella.md`
 - `api/v1alpha1/clustertriggerclass_types.go`

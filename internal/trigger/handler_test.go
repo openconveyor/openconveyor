@@ -85,13 +85,11 @@ func webhookSecret() *corev1.Secret {
 	}
 }
 
-// post builds a POST request with the body + correct signature header.
-func post(t *testing.T, path string, body []byte, sigHeader, sigValue string) *http.Request {
+// post builds a POST request with the body + the GitHub HMAC signature header.
+func post(t *testing.T, path string, body []byte, sigValue string) *http.Request {
 	t.Helper()
 	r := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
-	if sigHeader != "" {
-		r.Header.Set(sigHeader, sigValue)
-	}
+	r.Header.Set("X-Hub-Signature-256", sigValue)
 	return r.WithContext(context.Background())
 }
 
@@ -105,7 +103,7 @@ func TestHandler_HappyPath(t *testing.T) {
 	sig := "sha256=" + hmacHex(secret.Data["secret"], body)
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, post(t, "/github", body, "X-Hub-Signature-256", sig))
+	h.ServeHTTP(rec, post(t, "/github", body, sig))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d (body=%s), want 200", rec.Code, rec.Body.String())
@@ -142,7 +140,7 @@ func TestHandler_BadSignature(t *testing.T) {
 
 	body := []byte(`{"action":"opened","issue":{"title":"x"}}`)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, post(t, "/github", body, "X-Hub-Signature-256", "sha256=deadbeef"))
+	h.ServeHTTP(rec, post(t, "/github", body, "sha256=deadbeef"))
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
@@ -164,7 +162,7 @@ func TestHandler_FilterMismatchAccepts(t *testing.T) {
 	sig := "sha256=" + hmacHex(secret.Data["secret"], body)
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, post(t, "/github", body, "X-Hub-Signature-256", sig))
+	h.ServeHTTP(rec, post(t, "/github", body, sig))
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", rec.Code)
@@ -182,7 +180,7 @@ func TestHandler_UnknownPath(t *testing.T) {
 	body := []byte(`{}`)
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, post(t, "/nope", body, "X-Hub-Signature-256", "sha256=abc"))
+	h.ServeHTTP(rec, post(t, "/nope", body, "sha256=abc"))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
@@ -203,7 +201,7 @@ func TestHandler_InvalidJSON(t *testing.T) {
 	c := newFakeClient(t, githubTriggerClass(), webhookSecret())
 	h := newHandler(c)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, post(t, "/github", []byte(`not json`), "X-Hub-Signature-256", "sha256=abc"))
+	h.ServeHTTP(rec, post(t, "/github", []byte(`not json`), "sha256=abc"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
@@ -217,7 +215,7 @@ func TestHandler_SecretMissing(t *testing.T) {
 
 	body := []byte(`{"action":"opened","issue":{"title":"x"}}`)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, post(t, "/github", body, "X-Hub-Signature-256", "sha256=abc"))
+	h.ServeHTTP(rec, post(t, "/github", body, "sha256=abc"))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}

@@ -7,6 +7,7 @@ package policy
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -144,12 +145,7 @@ func hasIngressDenyAll(np *networkingv1.NetworkPolicy) bool {
 	if np.Spec.Ingress != nil {
 		return false
 	}
-	for _, t := range np.Spec.PolicyTypes {
-		if t == networkingv1.PolicyTypeIngress {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(np.Spec.PolicyTypes, networkingv1.PolicyTypeIngress)
 }
 
 func hasDNSRule(np *networkingv1.NetworkPolicy) bool {
