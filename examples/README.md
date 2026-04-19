@@ -8,6 +8,7 @@ Task shape are identical across examples — only the trigger differs.
 |---|---|---|
 | [`linear-claude-code/`](linear-claude-code/) | Linear webhook | SaaS issue tracker → Task |
 | [`github-issues-claude-code/`](github-issues-claude-code/) | GitHub Issues webhook | Git-host issue tracker → Task |
+| [`github-pr-claude-code/`](github-pr-claude-code/) | GitHub Pull Requests webhook | PR opened → review comment (reviewer archetype) |
 | [`claude-code-slash-dispatch/`](claude-code-slash-dispatch/) | Claude Code slash command (laptop) | Zero-infra, zero-webhook trigger |
 
 ## Shared prerequisites

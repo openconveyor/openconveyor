@@ -126,11 +126,12 @@ conveyor --trigger-bind-address=:9090 --trigger-namespace=conveyor-system
 |---|---|---|
 | [`examples/github-issues-claude-code/`](examples/github-issues-claude-code/) | GitHub Issues webhook | Label → Task → PR |
 | [`examples/linear-claude-code/`](examples/linear-claude-code/) | Linear workflow-state webhook | SaaS tracker → Task → PR |
+| [`examples/github-pr-claude-code/`](examples/github-pr-claude-code/) | GitHub Pull Requests webhook | Label → Task → PR review comment (reviewer archetype) |
 | [`examples/claude-code-slash-dispatch/`](examples/claude-code-slash-dispatch/) | Claude Code `/conveyor` slash command | Laptop is a trigger — no webhook, no server |
 
-All three examples drive the same `claude-code-implementer` agent
-image. The only thing that changes between them is what creates the
-Task.
+The first three examples drive the `claude-code-implementer` agent;
+the PR example drives `claude-code-reviewer`. The trigger is the only
+moving piece — the Task shape and the reconciler are identical.
 
 ## Architecture
 
@@ -185,7 +186,8 @@ OpenConveyor is in alpha and moving fast. The next milestones:
 - ✅ **Phase 0–5** — Security baseline, AgentClass resolution with
   prompt projection, reference implementer agent image, HMAC
   webhook adapter, three trigger examples.
-- ⏳ **Phase 6** — Reviewer agent (PR opened → review comments).
+- ✅ **Phase 6** — Reviewer agent (PR labeled → review comments),
+  with a GitHub Pull Requests example trigger.
 - ⏳ **Phase 7** — `conveyor-git` helper unifying GitHub / GitLab /
   Forgejo CLIs inside reference agents.
 - ⏳ **Phase 8** — GitLab / Forgejo example proving git-host
