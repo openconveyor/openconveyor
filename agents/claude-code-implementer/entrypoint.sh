@@ -32,7 +32,7 @@ if [[ -d "$SECRETS_ROOT" ]]; then
         name=$(basename "$(dirname "$file")")
         var=$(printf '%s' "$name" | tr '[:lower:]-' '[:upper:]_')
         export "$var=$(cat "$file")"
-    done < <(find "$SECRETS_ROOT" -mindepth 2 -maxdepth 2 -type f -print0 2>/dev/null || true)
+    done < <(find -L "$SECRETS_ROOT" -mindepth 2 -maxdepth 2 -type f -print0 2>/dev/null || true)
 fi
 
 # Some CLIs look for GITHUB_TOKEN; normalize from the conventional secret
@@ -40,6 +40,15 @@ fi
 if [[ -z "${GITHUB_TOKEN:-}" && -n "${GITHUB_TOKEN_FILE:-}" && -r "${GITHUB_TOKEN_FILE}" ]]; then
     GITHUB_TOKEN=$(cat "$GITHUB_TOKEN_FILE")
     export GITHUB_TOKEN
+fi
+
+# Wire $GITHUB_TOKEN into git so HTTPS pushes work without a TTY. The
+# x-access-token user is the documented form for fine-grained / installation
+# tokens; classic PATs work the same way.
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    git config --global credential.helper store
+    umask 077
+    printf 'https://x-access-token:%s@github.com\n' "$GITHUB_TOKEN" > "$HOME/.git-credentials"
 fi
 
 mkdir -p "$WORKDIR"
@@ -54,11 +63,16 @@ if [[ -n "${TARGET_REPO:-}" ]]; then
 fi
 
 log "running claude"
-claude --print < "$PROMPT_FILE"
+claude --print --verbose --output-format stream-json \
+    --permission-mode bypassPermissions \
+    < "$PROMPT_FILE"
 
 # Repo flow: only attempt a PR when we actually have a repo and changes.
-if [[ -n "${TARGET_REPO:-}" ]] && ! git diff --quiet; then
-    branch="conveyor/$(date -u +%Y%m%dT%H%M%SZ)"
+# `git diff --quiet HEAD` catches both staged and unstaged changes — claude may
+# have staged its own writes via `git add`, in which case `git diff` alone (which
+# only checks unstaged) reports clean even though there's a real change to commit.
+if [[ -n "${TARGET_REPO:-}" ]] && ! git diff --quiet HEAD; then
+    branch="${BRANCH_NAME:-conveyor/$(date -u +%Y%m%dT%H%M%SZ)}"
     git checkout -b "$branch"
     git add -A
     git commit -m "conveyor: automated change" >/dev/null
