@@ -38,9 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reference agent** (`agents/claude-code-implementer/`) — reads
   the prompt from a projected file, clones the target repo, runs
   Claude Code, opens a pull request.
-- **Three worked examples** under `examples/`:
-  GitHub Issues webhook, Linear workflow-state webhook, and a
-  Claude Code `/conveyor` slash-command dispatcher.
+- **Reviewer reference agent** (`agents/claude-code-reviewer/`) —
+  extracts a PR URL from the prompt, fetches the diff with `gh pr
+  diff`, runs Claude Code, posts the result via `gh pr review
+  --comment`. No `git push` path, no PR-open path.
+- **Four worked examples** under `examples/`: GitHub Issues
+  webhook, Linear workflow-state webhook, GitHub Pull Requests
+  webhook (reviewer), and a Claude Code `/conveyor` slash-command
+  dispatcher.
 - **Architecture docs** (`docs/architecture.md`),
   **security model** (`docs/security-model.md`), and six
   Accepted ADRs (`docs/adr/0001`–`0006`).

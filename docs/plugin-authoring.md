@@ -5,10 +5,10 @@ container image. Neither uses runtime plugin loading — everything
 an operator adds is declared in YAML and consumed by stock
 Kubernetes.
 
-> **Status.** The AgentClass contract is live (Phase 3 is building
-> the first reference implementation). The TriggerClass surface is
-> a thin wrapper over the webhook adapter landing in Phase 4. This
-> doc is a sketch; expect concrete examples once those phases ship.
+> **Status.** The AgentClass and TriggerClass contracts are live.
+> Two reference agent images ship in-tree (`agents/claude-code-
+> implementer/`, `agents/claude-code-reviewer/`) and four worked
+> examples wire them up under `examples/`.
 
 ## AgentClass
 

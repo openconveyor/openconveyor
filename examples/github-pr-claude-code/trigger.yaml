@@ -1,0 +1,59 @@
+# GitHub Pull Requests → reviewer Task.
+#
+# Fires on pull_request.labeled events where the label is `conveyor:review`,
+# so a human still gates dispatch by labeling. The PR's html_url is mapped
+# into the prompt; the reviewer agent extracts it and calls `gh pr diff`
+# + `gh pr review --comment`.
+#
+# Note: per-PR review instructions are not templatable today (mappings copy
+# a single payload field). If you need a custom rubric per PR, put it in
+# the PR body and switch the prompt mapping to pull_request.body — the
+# reviewer agent extracts the PR URL from the prompt regardless.
+apiVersion: openconveyor.ai/v1alpha1
+kind: ClusterTriggerClass
+metadata:
+  name: github-pr-reviewer
+spec:
+  path: /github/pull-request
+  signature:
+    header: X-Hub-Signature-256
+    algorithm: sha256
+    prefix: "sha256="
+    secretRef:
+      name: github-webhook
+      key: secret
+  filters:
+    - path: action
+      equals: labeled
+    - path: label.name
+      equals: "conveyor:review"
+  task:
+    namespace: conveyor-tasks
+    generateNamePrefix: gh-pr-
+    agent:
+      ref: claude-code-reviewer
+    permissions:
+      secrets:
+        - github-token
+      egress:
+        - api.github.com
+        - github.com
+    resources:
+      cpu: "1"
+      memory: 1Gi
+      timeout: 15m
+    mappings:
+      # The PR URL is the load-bearing input — the agent's entrypoint extracts
+      # it from the prompt with a regex and feeds it to `gh pr diff` /
+      # `gh pr review`. Default keeps the Task valid if html_url is somehow
+      # missing; the agent will then exit with a clear error.
+      - from: pull_request.html_url
+        to: prompt
+        default: "No pull_request.html_url in payload — cannot review"
+      - from: repository.full_name
+        to: annotations.openconveyor.ai/repo
+      - from: pull_request.number
+        to: labels.openconveyor.ai/pr-number
+      - from: sender.login
+        to: annotations.openconveyor.ai/requested-by
+        default: unknown
