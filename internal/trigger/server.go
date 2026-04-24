@@ -58,7 +58,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("trigger server listen %s: %w", s.Addr, err)
 	}
-	s.Log.Info("trigger webhook server listening", "addr", ln.Addr().String())
+	s.Log.Info("Started trigger webhook server", "addr", ln.Addr().String())
 
 	serveErr := make(chan error, 1)
 	go func() {

@@ -21,6 +21,14 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
+    - jsonPath: .status.startTime
+      name: Started
+      priority: 1
+      type: date
+    - jsonPath: .status.completionTime
+      name: Completed
+      priority: 1
+      type: date
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -267,6 +275,13 @@ spec:
               jobName:
                 description: jobName references the Job owned by this Task.
                 type: string
+              observedGeneration:
+                description: |-
+                  observedGeneration is the most recent .metadata.generation the
+                  controller has reconciled against. Consumers use it to detect stale
+                  status after a spec change.
+                format: int64
+                type: integer
               phase:
                 description: phase is a coarse lifecycle marker.
                 enum:

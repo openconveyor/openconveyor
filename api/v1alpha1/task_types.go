@@ -137,6 +137,12 @@ type TaskStatus struct {
 	// +optional
 	Phase TaskPhase `json:"phase,omitempty"`
 
+	// observedGeneration is the most recent .metadata.generation the
+	// controller has reconciled against. Consumers use it to detect stale
+	// status after a spec change.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// jobName references the Job owned by this Task.
 	// +optional
 	JobName string `json:"jobName,omitempty"`
@@ -160,6 +166,8 @@ type TaskStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Agent",type=string,JSONPath=`.spec.agent.ref`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Started",type=date,JSONPath=`.status.startTime`,priority=1
+// +kubebuilder:printcolumn:name="Completed",type=date,JSONPath=`.status.completionTime`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Task is a single agent run: the orchestrator materializes a ServiceAccount,

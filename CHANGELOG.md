@@ -59,6 +59,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Architecture docs** (`docs/architecture.md`),
   **security model** (`docs/security-model.md`), and six
   Accepted ADRs (`docs/adr/0001`–`0006`).
+- **Prometheus metrics** (`internal/metrics/`) exposed on the manager's
+  existing `/metrics` endpoint:
+  `conveyor_task_phase_transitions_total{phase,reason}`,
+  `conveyor_task_reconcile_errors_total{step}`,
+  `conveyor_task_duration_seconds{phase}` (histogram), and
+  `conveyor_webhook_requests_total{trigger_class,result}`.
+- **`status.observedGeneration`** on Task — the most recent
+  `metadata.generation` the controller has reconciled against.
+  Makes stale-status detection trivial for consumers.
+- **Extra Task print columns** — `Started` and `Completed` (priority=1,
+  surfaced with `-o wide`) alongside the existing Agent / Phase / Age.
+- **Structured Info log** emitted on every Task phase transition,
+  carrying the before/after phase and the condition reason.
+
+### Changed
+
+- Trigger adapter log messages normalised to the Kubernetes logging
+  style (capital first letter, no trailing period, past tense) and
+  now emit an Info log on each successful Task creation.
 
 ### Known limitations
 

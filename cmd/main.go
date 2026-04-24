@@ -210,7 +210,7 @@ func main() {
 			setupLog.Error(err, "Failed to register trigger server")
 			os.Exit(1)
 		}
-		setupLog.Info("trigger adapter enabled", "addr", triggerAddr, "namespace", ns)
+		setupLog.Info("Enabled trigger adapter", "addr", triggerAddr, "namespace", ns)
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

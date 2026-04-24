@@ -190,8 +190,10 @@ OpenConveyor is in alpha and moving fast. The next milestones:
   with a GitHub Pull Requests example trigger.
 - ✅ **Phase 7** — Scheduled tasks via stock `CronJob`, reporter
   agent archetype, phone workflow documentation.
-- ⏳ **Phase 8** — Prometheus metrics, structured logs, Task status
-  subresource polish.
+- ✅ **Phase 8** — Prometheus metrics (task phase transitions,
+  reconcile errors, task duration, webhook request outcomes),
+  structured K8s-style logs, Task `status.observedGeneration` and
+  start/complete print columns.
 - ⏳ **Phase 9** — v0.1.0 release (GitHub-only scope).
 
 **Post-v0.1.0:**
@@ -204,10 +206,11 @@ OpenConveyor is in alpha and moving fast. The next milestones:
 
 ## Status
 
-**Alpha.** Phases 0–7 of the roadmap are live; the security baseline
+**Alpha.** Phases 0–8 of the roadmap are live; the security baseline
 and trigger adapter are covered by unit and `envtest` integration
-tests. APIs may still change before v0.1.0. No production users yet —
-this is pre-1.0 by design.
+tests, and the controller exposes custom Prometheus metrics on the
+manager's `/metrics` endpoint. APIs may still change before v0.1.0.
+No production users yet — this is pre-1.0 by design.
 
 ## Community
 

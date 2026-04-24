@@ -27,6 +27,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
+	"github.com/openconveyor/openconveyor/internal/metrics"
 	"github.com/openconveyor/openconveyor/internal/policy"
 )
 
@@ -75,27 +76,33 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	if err := validateTask(&task); err != nil {
+		metrics.ObserveReconcileError(metrics.StepValidate)
 		return ctrl.Result{}, r.markInvalid(ctx, &task, reasonInvalidSpec, err.Error())
 	}
 
 	var agent conveyorv1alpha1.ClusterAgentClass
 	if err := r.Get(ctx, types.NamespacedName{Name: task.Spec.Agent.Ref}, &agent); err != nil {
 		if apierrors.IsNotFound(err) {
+			metrics.ObserveReconcileError(metrics.StepAgentClassLookup)
 			return ctrl.Result{}, r.markInvalid(ctx, &task, reasonAgentClassMissing,
 				fmt.Sprintf("ClusterAgentClass %q not found", task.Spec.Agent.Ref))
 		}
+		metrics.ObserveReconcileError(metrics.StepAgentClassLookup)
 		return ctrl.Result{}, err
 	}
 
 	if err := r.ensureServiceAccount(ctx, &task); err != nil {
+		metrics.ObserveReconcileError(metrics.StepServiceAccount)
 		return ctrl.Result{}, fmt.Errorf("ensure service account: %w", err)
 	}
 
 	if err := r.ensureRole(ctx, &task); err != nil {
+		metrics.ObserveReconcileError(metrics.StepRole)
 		return ctrl.Result{}, fmt.Errorf("ensure role: %w", err)
 	}
 
 	if err := r.ensureRoleBinding(ctx, &task); err != nil {
+		metrics.ObserveReconcileError(metrics.StepRoleBinding)
 		return ctrl.Result{}, fmt.Errorf("ensure rolebinding: %w", err)
 	}
 
@@ -103,20 +110,24 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	effectiveSecrets := policy.MergeStringSets(task.Spec.Permissions.Secrets, agent.Spec.Requires.Secrets)
 
 	if err := r.ensureNetworkPolicy(ctx, &task, effectiveEgress); err != nil {
+		metrics.ObserveReconcileError(metrics.StepNetworkPolicy)
 		return ctrl.Result{}, r.markInvalid(ctx, &task, reasonEgressResolveFail, err.Error())
 	}
 
 	if err := r.ensurePromptConfigMap(ctx, &task); err != nil {
+		metrics.ObserveReconcileError(metrics.StepPromptConfigMap)
 		return ctrl.Result{}, fmt.Errorf("ensure prompt configmap: %w", err)
 	}
 
 	job, err := r.ensureJob(ctx, &task, &agent, effectiveSecrets)
 	if err != nil {
+		metrics.ObserveReconcileError(metrics.StepJob)
 		return ctrl.Result{}, fmt.Errorf("ensure job: %w", err)
 	}
 
 	if err := r.syncStatus(ctx, &task, job); err != nil {
-		log.Error(err, "update status")
+		metrics.ObserveReconcileError(metrics.StepStatus)
+		log.Error(err, "Failed to update Task status")
 		return ctrl.Result{}, err
 	}
 
@@ -322,11 +333,13 @@ func (r *TaskReconciler) deleteIfExists(ctx context.Context, key types.Namespace
 }
 
 func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.Task, job *batchv1.Job) error {
+	log := logf.FromContext(ctx)
 	before := task.Status.DeepCopy()
 
 	task.Status.JobName = job.Name
 	task.Status.StartTime = job.Status.StartTime
 	task.Status.CompletionTime = job.Status.CompletionTime
+	task.Status.ObservedGeneration = task.Generation
 
 	phase, reason, msg := derivePhase(job)
 	task.Status.Phase = phase
@@ -344,7 +357,27 @@ func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.
 	if equalStatus(before, &task.Status) {
 		return nil
 	}
+
+	if before.Phase != phase {
+		log.Info("Task phase transitioned", "from", before.Phase, "to", phase, "reason", reason)
+		metrics.ObservePhaseTransition(string(phase), reason)
+		if isTerminal(phase) && task.Status.StartTime != nil && task.Status.CompletionTime != nil {
+			dur := task.Status.CompletionTime.Sub(task.Status.StartTime.Time).Seconds()
+			metrics.ObserveTaskDuration(string(phase), dur)
+		}
+	}
+
 	return r.Status().Update(ctx, task)
+}
+
+func isTerminal(phase conveyorv1alpha1.TaskPhase) bool {
+	switch phase {
+	case conveyorv1alpha1.TaskPhaseCompleted,
+		conveyorv1alpha1.TaskPhaseFailed,
+		conveyorv1alpha1.TaskPhaseTimedOut:
+		return true
+	}
+	return false
 }
 
 func derivePhase(job *batchv1.Job) (conveyorv1alpha1.TaskPhase, string, string) {
@@ -380,7 +413,9 @@ func conditionStatusFor(phase conveyorv1alpha1.TaskPhase) metav1.ConditionStatus
 }
 
 func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1.Task, reason, msg string) error {
+	prevPhase := task.Status.Phase
 	task.Status.Phase = conveyorv1alpha1.TaskPhaseFailed
+	task.Status.ObservedGeneration = task.Generation
 	setCondition(&task.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,
 		Status:             metav1.ConditionFalse,
@@ -389,6 +424,9 @@ func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1
 		ObservedGeneration: task.Generation,
 		LastTransitionTime: metav1.Now(),
 	})
+	if prevPhase != conveyorv1alpha1.TaskPhaseFailed {
+		metrics.ObservePhaseTransition(string(conveyorv1alpha1.TaskPhaseFailed), reason)
+	}
 	return r.Status().Update(ctx, task)
 }
 
@@ -408,6 +446,9 @@ func setCondition(conds *[]metav1.Condition, new metav1.Condition) {
 
 func equalStatus(a, b *conveyorv1alpha1.TaskStatus) bool {
 	if a.Phase != b.Phase || a.JobName != b.JobName {
+		return false
+	}
+	if a.ObservedGeneration != b.ObservedGeneration {
 		return false
 	}
 	if !timesEqual(a.StartTime, b.StartTime) || !timesEqual(a.CompletionTime, b.CompletionTime) {

@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
+	"github.com/openconveyor/openconveyor/internal/metrics"
 )
 
 // maxBodyBytes caps inbound webhook payloads. 1 MiB covers everything
@@ -61,6 +62,7 @@ type Handler struct {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
+		metrics.ObserveWebhook("", metrics.ResultRejectedMethod)
 		writeStatus(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
@@ -69,50 +71,59 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
+			metrics.ObserveWebhook("", metrics.ResultRejectedBodyTooLarge)
 			writeStatus(w, http.StatusRequestEntityTooLarge, "body too large")
 			return
 		}
+		metrics.ObserveWebhook("", metrics.ResultRejectedBadBody)
 		writeStatus(w, http.StatusBadRequest, "read body: "+err.Error())
 		return
 	}
 	defer func() { _ = r.Body.Close() }()
 
 	if !json.Valid(body) {
+		metrics.ObserveWebhook("", metrics.ResultRejectedBadBody)
 		writeStatus(w, http.StatusBadRequest, "body is not valid JSON")
 		return
 	}
 
 	ctc, err := h.findTriggerClass(r.Context(), r.URL.Path)
 	if err != nil {
+		metrics.ObserveWebhook("", metrics.ResultError)
 		writeStatus(w, http.StatusInternalServerError, "lookup trigger class: "+err.Error())
 		return
 	}
 	if ctc == nil {
+		metrics.ObserveWebhook("", metrics.ResultNotFound)
 		writeStatus(w, http.StatusNotFound, "no ClusterTriggerClass registered for path "+r.URL.Path)
 		return
 	}
 
 	secret, err := h.lookupSignatureSecret(r.Context(), ctc)
 	if err != nil {
-		h.Log.Error(err, "load signature secret", "triggerClass", ctc.Name)
+		h.Log.Error(err, "Failed to load signature secret", "triggerClass", ctc.Name)
+		metrics.ObserveWebhook(ctc.Name, metrics.ResultError)
 		writeStatus(w, http.StatusInternalServerError, "load signature secret")
 		return
 	}
 
 	header := r.Header.Get(ctc.Spec.Signature.Header)
 	if err := VerifyHMAC(ctc.Spec.Signature.Algorithm, ctc.Spec.Signature.Prefix, header, secret, body); err != nil {
-		h.Log.V(1).Info("signature rejected", "triggerClass", ctc.Name, "err", err.Error())
+		h.Log.V(1).Info("Rejected signature", "triggerClass", ctc.Name, "err", err.Error())
+		metrics.ObserveWebhook(ctc.Name, metrics.ResultRejectedSignature)
 		writeStatus(w, http.StatusUnauthorized, "signature verification failed")
 		return
 	}
 
 	if !ApplyFilters(body, ctc.Spec.Filters) {
+		metrics.ObserveWebhook(ctc.Name, metrics.ResultFiltered)
 		writeJSON(w, http.StatusAccepted, map[string]any{"filtered": true})
 		return
 	}
 
 	task, err := BuildTask(ctc.Spec.Task, body)
 	if err != nil {
+		metrics.ObserveWebhook(ctc.Name, metrics.ResultBuildFailed)
 		writeStatus(w, http.StatusBadRequest, "build task: "+err.Error())
 		return
 	}
@@ -124,11 +135,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Client.Create(r.Context(), task); err != nil {
-		h.Log.Error(err, "create task", "triggerClass", ctc.Name)
+		h.Log.Error(err, "Failed to create Task", "triggerClass", ctc.Name)
+		metrics.ObserveWebhook(ctc.Name, metrics.ResultError)
 		writeStatus(w, http.StatusInternalServerError, "create task: "+err.Error())
 		return
 	}
 
+	h.Log.Info("Created Task from webhook", "triggerClass", ctc.Name, "task", task.Name, "namespace", task.Namespace)
+	metrics.ObserveWebhook(ctc.Name, metrics.ResultAccepted)
 	writeJSON(w, http.StatusOK, map[string]any{"task": task.Name, "namespace": task.Namespace})
 }
 
