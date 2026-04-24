@@ -21,7 +21,9 @@ func TestServer_StartAndShutdown(t *testing.T) {
 		t.Fatalf("find free port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
 
 	c := newFakeClient(t)
 	srv := &Server{
@@ -38,10 +40,10 @@ func TestServer_StartAndShutdown(t *testing.T) {
 
 	// Wait for the server to be ready.
 	var lastErr error
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		resp, err := http.Get("http://" + addr + "/healthz")
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				lastErr = nil
 				break
