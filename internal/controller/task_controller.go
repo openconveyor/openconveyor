@@ -16,6 +16,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -34,6 +35,7 @@ const (
 
 	reasonAgentClassMissing = "AgentClassMissing"
 	reasonInvalidSpec       = "InvalidSpec"
+	reasonPending           = "Pending"
 	reasonRunning           = "Running"
 	reasonCompleted         = "Completed"
 	reasonFailed            = "Failed"
@@ -132,6 +134,16 @@ func validateTask(task *conveyorv1alpha1.Task) error {
 	if p.Inline == "" && p.SecretRef == nil && p.ConfigMapRef == nil {
 		return fmt.Errorf("spec.prompt requires one of inline/secretRef/configMapRef")
 	}
+	if r := task.Spec.Resources; r.CPU != "" {
+		if _, err := resource.ParseQuantity(r.CPU); err != nil {
+			return fmt.Errorf("spec.resources.cpu: %w", err)
+		}
+	}
+	if r := task.Spec.Resources; r.Memory != "" {
+		if _, err := resource.ParseQuantity(r.Memory); err != nil {
+			return fmt.Errorf("spec.resources.memory: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -208,9 +220,8 @@ func (r *TaskReconciler) ensureRoleBinding(ctx context.Context, task *conveyorv1
 
 // ensureNetworkPolicy resolves the Task's egress allowlist to CIDRs and
 // upserts a NetworkPolicy that pairs a default-deny baseline with DNS +
-// allowlist exceptions. When egress is empty, the pod is still locked
-// down to DNS-only via the same policy (otherwise it could reach the
-// whole cluster pod network by default on most CNIs).
+// allowlist exceptions. When egress is empty the policy has zero egress
+// rules — the pod cannot reach anything, not even DNS.
 func (r *TaskReconciler) ensureNetworkPolicy(ctx context.Context, task *conveyorv1alpha1.Task, egress []string) error {
 	resolver := r.Resolver
 	if resolver == nil {
@@ -354,7 +365,7 @@ func derivePhase(job *batchv1.Job) (conveyorv1alpha1.TaskPhase, string, string) 
 	if job.Status.Active > 0 || job.Status.StartTime != nil {
 		return conveyorv1alpha1.TaskPhaseRunning, reasonRunning, "Job is running"
 	}
-	return conveyorv1alpha1.TaskPhasePending, reasonRunning, "Waiting for pod to start"
+	return conveyorv1alpha1.TaskPhasePending, reasonPending, "Waiting for pod to start"
 }
 
 func conditionStatusFor(phase conveyorv1alpha1.TaskPhase) metav1.ConditionStatus {

@@ -83,6 +83,9 @@ func buildJob(
 	if err != nil {
 		return nil, err
 	}
+	// TODO: AgentRef.Config and AgentInputs.Config are declared in the CRD
+	// but not projected yet. Planned for a future phase alongside multi-agent
+	// support (Gemini, Codex, etc.).
 
 	volumes := make([]corev1.Volume, 0, 2+len(secretVolumes))
 	volumes = append(volumes, corev1.Volume{

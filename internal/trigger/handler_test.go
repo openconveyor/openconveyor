@@ -220,3 +220,89 @@ func TestHandler_SecretMissing(t *testing.T) {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
 }
+
+func TestHandler_BodyTooLarge(t *testing.T) {
+	ctc := githubTriggerClass()
+	secret := webhookSecret()
+	c := newFakeClient(t, ctc, secret)
+	h := newHandler(c)
+
+	// 1 MiB + 1 byte exceeds maxBodyBytes.
+	big := make([]byte, maxBodyBytes+1)
+	for i := range big {
+		big[i] = 'x'
+	}
+	r := httptest.NewRequest(http.MethodPost, "/github", bytes.NewReader(big))
+	r.Header.Set("X-Hub-Signature-256", "sha256=irrelevant")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", rec.Code)
+	}
+}
+
+func TestHandler_AmbiguousPath(t *testing.T) {
+	ctc1 := githubTriggerClass()
+	ctc2 := githubTriggerClass()
+	ctc2.Name = "github-issues-2" // same path, different name
+	secret := webhookSecret()
+	c := newFakeClient(t, ctc1, ctc2, secret)
+	h := newHandler(c)
+
+	body := []byte(`{"action":"opened","issue":{"title":"x"}}`)
+	sig := "sha256=" + hmacHex(secret.Data["secret"], body)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, post(t, "/github", body, sig))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for ambiguous path", rec.Code)
+	}
+}
+
+func TestHandler_IncompleteSecretRef(t *testing.T) {
+	ctc := githubTriggerClass()
+	ctc.Spec.Signature.SecretRef.Key = "" // incomplete
+	secret := webhookSecret()
+	c := newFakeClient(t, ctc, secret)
+	h := newHandler(c)
+
+	body := []byte(`{"action":"opened","issue":{"title":"x"}}`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, post(t, "/github", body, "sha256=abc"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for incomplete secretRef", rec.Code)
+	}
+}
+
+func TestHandler_SecretKeyMissing(t *testing.T) {
+	ctc := githubTriggerClass()
+	// Secret exists but with a different key than expected.
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "github-webhook", Namespace: adapterNamespace},
+		Data:       map[string][]byte{"wrong-key": []byte("shh")},
+	}
+	c := newFakeClient(t, ctc, secret)
+	h := newHandler(c)
+
+	body := []byte(`{"action":"opened","issue":{"title":"x"}}`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, post(t, "/github", body, "sha256=abc"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for missing secret key", rec.Code)
+	}
+}
+
+func TestHandler_TrailingSlashNormalized(t *testing.T) {
+	ctc := githubTriggerClass()
+	secret := webhookSecret()
+	c := newFakeClient(t, ctc, secret)
+	h := newHandler(c)
+
+	body := []byte(`{"action":"opened","issue":{"title":"fix it"}}`)
+	sig := "sha256=" + hmacHex(secret.Data["secret"], body)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, post(t, "/github/", body, sig))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (body=%s), want 200 for trailing-slash path", rec.Code, rec.Body.String())
+	}
+}

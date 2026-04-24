@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ClusterAgentClass.spec.image` accepts tags; digest references
   are not enforced.
 - `spec.resources.cpu` and `spec.resources.memory` are optional.
+- `AgentRef.config` and `AgentInputs.config` are declared in the CRD
+  but not yet projected into the pod. Planned for a future phase
+  alongside multi-agent support (Gemini, Codex, etc.).
 - NetworkPolicy egress resolves DNS names to IPs at reconcile time
   (no dynamic FQDN enforcement). See ADR-0005 for the Cilium
   upgrade path.
