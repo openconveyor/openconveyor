@@ -1,8 +1,8 @@
 # Examples
 
-Three ways to fire the same implementer agent, proving OpenConveyor's
-trigger-pluggability thesis. The reconciler, the AgentClass, and the
-Task shape are identical across examples — only the trigger differs.
+Five ways to fire agents, proving OpenConveyor's trigger-pluggability
+thesis. The reconciler, the AgentClass, and the Task shape are
+identical across examples — only the trigger differs.
 
 | Example | Trigger | What it shows |
 |---|---|---|
@@ -10,6 +10,7 @@ Task shape are identical across examples — only the trigger differs.
 | [`github-issues-claude-code/`](github-issues-claude-code/) | GitHub Issues webhook | Git-host issue tracker → Task |
 | [`github-pr-claude-code/`](github-pr-claude-code/) | GitHub Pull Requests webhook | PR opened → review comment (reviewer archetype) |
 | [`claude-code-slash-dispatch/`](claude-code-slash-dispatch/) | Claude Code slash command (laptop) | Zero-infra, zero-webhook trigger |
+| [`cronjob-reporter/`](cronjob-reporter/) | Kubernetes CronJob | Scheduled Task dispatch (reporter archetype) |
 
 ## Shared prerequisites
 

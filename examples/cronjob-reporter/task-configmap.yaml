@@ -1,0 +1,40 @@
+# ConfigMap holding the Task YAML that the CronJob applies on each tick.
+# Edit the prompt, TARGET_REPO, and REPORT_ISSUE_URL to match your project.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reporter-task-template
+  namespace: conveyor-tasks
+  labels:
+    app.kubernetes.io/name: conveyor
+    app.kubernetes.io/component: cronjob-reporter
+data:
+  task.yaml: |
+    apiVersion: openconveyor.ai/v1alpha1
+    kind: Task
+    metadata:
+      generateName: report-
+      namespace: conveyor-tasks
+      labels:
+        openconveyor.ai/trigger: cronjob
+    spec:
+      agent:
+        ref: claude-code-reporter
+      prompt:
+        inline: |
+          Summarize the PRs merged and issues opened in the past week.
+          Highlight anything that looks like a breaking change or a
+          security-relevant fix. Keep it concise (under 500 words).
+
+          TARGET_REPO=your-org/your-repo
+          REPORT_ISSUE_URL=https://github.com/your-org/your-repo/issues/1
+      permissions:
+        secrets:
+          - github-token
+        egress:
+          - api.github.com
+          - api.anthropic.com
+      resources:
+        cpu: "500m"
+        memory: 512Mi
+        timeout: 10m

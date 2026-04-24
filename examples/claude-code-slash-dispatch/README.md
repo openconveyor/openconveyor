@@ -92,5 +92,5 @@ When the Job completes, `kubectl get task <task-name>` will show
   hand off work — is the logical next step once this example proves
   the UX. Not shipping until then.
 - **Status polling / Telegram notification.** The run happens
-  detached; reconnecting is a separate concern (Phase 9's reporter
-  path is the right place to wire that).
+  detached; reconnecting is a separate concern (the reporter agent
+  and `examples/cronjob-reporter/` show the output path).

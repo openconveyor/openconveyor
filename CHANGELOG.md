@@ -42,10 +42,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extracts a PR URL from the prompt, fetches the diff with `gh pr
   diff`, runs Claude Code, posts the result via `gh pr review
   --comment`. No `git push` path, no PR-open path.
-- **Four worked examples** under `examples/`: GitHub Issues
+- **Reporter reference agent** (`agents/claude-code-reporter/`) —
+  gathers data from the GitHub API, runs Claude Code to produce a
+  summary, and posts the result as a GitHub Issue comment. No git
+  clone, no git push — read-only agent.
+- **CronJob reporter example** (`examples/cronjob-reporter/`) —
+  scheduled Task dispatch via stock Kubernetes CronJob. Proves the
+  out-of-process trigger pattern for recurring tasks (ADR-0003).
+- **Phone workflow documentation** (`docs/phone-workflow.md`) —
+  step-by-step guide for iterative development from a phone using
+  GitHub Issues as the dispatch mechanism.
+- **Five worked examples** under `examples/`: GitHub Issues
   webhook, Linear workflow-state webhook, GitHub Pull Requests
-  webhook (reviewer), and a Claude Code `/conveyor` slash-command
-  dispatcher.
+  webhook (reviewer), Claude Code `/conveyor` slash-command
+  dispatcher, and CronJob reporter.
 - **Architecture docs** (`docs/architecture.md`),
   **security model** (`docs/security-model.md`), and six
   Accepted ADRs (`docs/adr/0001`–`0006`).
@@ -60,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are not enforced.
 - `spec.resources.cpu` and `spec.resources.memory` are optional.
 - `AgentRef.config` and `AgentInputs.config` are declared in the CRD
-  but not yet projected into the pod. Planned for a future phase
+  but not yet projected into the pod. Planned for post-v0.1.0
   alongside multi-agent support (Gemini, Codex, etc.).
 - NetworkPolicy egress resolves DNS names to IPs at reconcile time
   (no dynamic FQDN enforcement). See ADR-0005 for the Cilium

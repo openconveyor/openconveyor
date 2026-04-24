@@ -1,0 +1,38 @@
+# Stock Kubernetes CronJob that creates a reporter Task on a schedule.
+# Per ADR-0003, triggers are out-of-process — this CronJob is just
+# `kubectl apply` running in a pod on a timer.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: weekly-report
+  namespace: conveyor-tasks
+  labels:
+    app.kubernetes.io/name: conveyor
+    app.kubernetes.io/component: cronjob-reporter
+spec:
+  # Monday at 09:00 UTC. Adjust to your timezone/preference.
+  schedule: "0 9 * * 1"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: cronjob-reporter
+          restartPolicy: OnFailure
+          containers:
+            - name: dispatch
+              image: bitnami/kubectl:latest
+              command:
+                - sh
+                - -c
+                - kubectl apply -f /config/task.yaml
+              volumeMounts:
+                - name: task-template
+                  mountPath: /config
+                  readOnly: true
+          volumes:
+            - name: task-template
+              configMap:
+                name: reporter-task-template

@@ -20,7 +20,7 @@ spec:
     # Every implementer run needs the model API and a git host. The Task
     # is still expected to declare the specific git host it targets — the
     # AgentClass does not force a single host so the same image works for
-    # GitHub / GitLab / Forgejo once conveyor-git ships.
+    # GitHub / GitLab / Forgejo once conveyor-git ships (post-v0.1.0).
     egress:
       - api.anthropic.com
     secrets:

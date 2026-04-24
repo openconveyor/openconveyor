@@ -1,0 +1,28 @@
+# Reference ClusterAgentClass for the "reporter" archetype: reads data from
+# the GitHub API, summarizes it with Claude, and posts the result as a GitHub
+# Issue comment. Never clones a repo, never pushes code. The github-token
+# Secret should be scoped to Issue read + comment only.
+apiVersion: openconveyor.ai/v1alpha1
+kind: ClusterAgentClass
+metadata:
+  labels:
+    app.kubernetes.io/name: conveyor
+    app.kubernetes.io/managed-by: kustomize
+  name: claude-code-reporter
+spec:
+  image: ghcr.io/openconveyor/agent-claude-reporter:latest
+  imagePullPolicy: IfNotPresent
+  inputs:
+    # The agent's entrypoint reads /task/prompt for the reporting instruction.
+    # Typical prompts: "Summarize PRs merged this week" or "Report on open
+    # issues older than 30 days."
+    prompt:
+      mount: /task/prompt
+  requires:
+    # Every reporter run needs the model API. The git host API (api.github.com)
+    # and github-token are per-Task so the operator controls which repos the
+    # reporter can read.
+    egress:
+      - api.anthropic.com
+    secrets:
+      - anthropic-api-key

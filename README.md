@@ -188,19 +188,23 @@ OpenConveyor is in alpha and moving fast. The next milestones:
   webhook adapter, three trigger examples.
 - ✅ **Phase 6** — Reviewer agent (PR labeled → review comments),
   with a GitHub Pull Requests example trigger.
-- ⏳ **Phase 7** — `conveyor-git` helper unifying GitHub / GitLab /
-  Forgejo CLIs inside reference agents.
-- ⏳ **Phase 8** — GitLab / Forgejo example proving git-host
-  pluggability.
-- ⏳ **Phase 9** — Scheduled tasks via stock `CronJob`, reporter
-  archetype, Telegram output.
-- ⏳ **Phase 10** — Prometheus metrics, structured logs, Task status
+- ✅ **Phase 7** — Scheduled tasks via stock `CronJob`, reporter
+  agent archetype, phone workflow documentation.
+- ⏳ **Phase 8** — Prometheus metrics, structured logs, Task status
   subresource polish.
-- ⏳ **Phase 11** — v0.1.0 release.
+- ⏳ **Phase 9** — v0.1.0 release (GitHub-only scope).
+
+**Post-v0.1.0:**
+
+- `conveyor-git` helper unifying GitHub / GitLab / Forgejo CLIs
+  inside reference agents.
+- GitLab / Forgejo examples proving git-host pluggability.
+- `AgentRef.config` projection into the pod (multi-agent support
+  for Gemini, Codex, etc.).
 
 ## Status
 
-**Alpha.** Phases 0–5 of the roadmap are live; the security baseline
+**Alpha.** Phases 0–7 of the roadmap are live; the security baseline
 and trigger adapter are covered by unit and `envtest` integration
 tests. APIs may still change before v0.1.0. No production users yet —
 this is pre-1.0 by design.

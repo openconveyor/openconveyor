@@ -50,7 +50,7 @@ func (DefaultResolver) LookupHost(ctx context.Context, host string) ([]string, e
 // Hostnames are resolved once at reconcile time. DNS-based allowlists
 // are a best-effort snapshot; for stable FQDN enforcement, users should
 // deploy Cilium and let its FQDN policies do the work. Documented in
-// docs/security-model.md (Phase 7).
+// docs/security-model.md.
 func BuildNetworkPolicy(
 	ctx context.Context,
 	resolver Resolver,

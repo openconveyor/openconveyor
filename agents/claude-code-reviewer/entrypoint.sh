@@ -55,7 +55,7 @@ fi
 
 case "${GIT_HOST:-github}" in
     github) ;;
-    *) die "git host '${GIT_HOST}' not yet supported — waiting on conveyor-git" ;;
+    *) die "git host '${GIT_HOST}' not yet supported — waiting on conveyor-git (post-v0.1.0)" ;;
 esac
 
 [[ -n "${GITHUB_TOKEN:-}" ]] || die "GITHUB_TOKEN not set; declare the github-token Secret on the Task"

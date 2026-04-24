@@ -11,7 +11,7 @@
 # This script deliberately stays thin: it wires secrets into the env that
 # claude / gh expect, clones the repo if one is declared, hands the prompt
 # to `claude --print`, and opens a PR if anything changed. Git-host logic
-# beyond GitHub will move into conveyor-git (Phase 7).
+# beyond GitHub will move into conveyor-git (post-v0.1.0).
 
 set -euo pipefail
 
@@ -82,7 +82,7 @@ if [[ -n "${TARGET_REPO:-}" ]] && ! git diff --quiet HEAD; then
             gh pr create --fill --base "${TARGET_BRANCH:-main}" --head "$branch"
             ;;
         *)
-            die "git host '${GIT_HOST}' not yet supported — waiting on conveyor-git"
+            die "git host '${GIT_HOST}' not yet supported — waiting on conveyor-git (post-v0.1.0)"
             ;;
     esac
 else

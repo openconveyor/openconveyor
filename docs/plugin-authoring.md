@@ -93,8 +93,8 @@ spec:
 Anything that `kubectl apply`s a Task is a trigger. Examples already
 planned:
 
-- **Scheduled (Phase 9):** a stock K8s `CronJob` that `kubectl apply`s
-  a Task YAML.
+- **Scheduled (Phase 7):** a stock K8s `CronJob` that `kubectl apply`s
+  a Task YAML. See `examples/cronjob-reporter/`.
 - **Slash command (Phase 5):** a Claude Code `/conveyor <prompt>`
   slash command that expands to a `kubectl apply`.
 - **Custom scripts:** anything in bash or Python that can hit the

@@ -21,7 +21,7 @@ spec:
   requires:
     # Every reviewer run needs the model API. The git host is per-Task — the
     # AgentClass does not pin one so the same image works for GitHub /
-    # GitLab / Forgejo once conveyor-git ships (Phase 7).
+    # GitLab / Forgejo once conveyor-git ships (post-v0.1.0).
     egress:
       - api.anthropic.com
     secrets:

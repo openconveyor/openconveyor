@@ -1,0 +1,41 @@
+# Minimal RBAC for the CronJob's pod to create Task CRs.
+# The ServiceAccount can only create Tasks in conveyor-tasks — nothing else.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cronjob-reporter
+  namespace: conveyor-tasks
+  labels:
+    app.kubernetes.io/name: conveyor
+    app.kubernetes.io/component: cronjob-reporter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cronjob-reporter
+  namespace: conveyor-tasks
+  labels:
+    app.kubernetes.io/name: conveyor
+    app.kubernetes.io/component: cronjob-reporter
+rules:
+  - apiGroups: ["openconveyor.ai"]
+    resources: ["tasks"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cronjob-reporter
+  namespace: conveyor-tasks
+  labels:
+    app.kubernetes.io/name: conveyor
+    app.kubernetes.io/component: cronjob-reporter
+subjects:
+  - kind: ServiceAccount
+    name: cronjob-reporter
+    namespace: conveyor-tasks
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cronjob-reporter
