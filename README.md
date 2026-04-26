@@ -87,28 +87,36 @@ gets garbage-collected with it.
 
 ## Quick start
 
-Requirements: Go 1.23+, Docker, `kubectl`, a Kubernetes cluster
-(k3s / kind / EKS / anything).
+Requirements: `kubectl`, a Kubernetes cluster (k3s / kind / EKS / anything).
+
+```sh
+# 1. Install CRDs + controller. Pulls the v0.1.0 multi-arch image
+#    (linux/amd64 + linux/arm64) from ghcr.io/openconveyor/conveyor.
+kubectl apply -f https://github.com/openconveyor/openconveyor/releases/download/v0.1.0/install.yaml
+
+# 2. Apply the sample AgentClass + a Task.
+kubectl apply -k https://github.com/openconveyor/openconveyor//config/samples?ref=v0.1.0
+kubectl get tasks -w
+```
+
+The controller lands in the `conveyor-system` namespace. Sample Tasks
+land in `conveyor-tasks`. See [`docs/security-model.md`](docs/security-model.md)
+for the four guarantees the controller enforces on every Task it spawns.
+
+### Building from source
+
+For contributors and forks:
 
 ```sh
 git clone https://github.com/openconveyor/openconveyor.git
 cd openconveyor
 
-# 1. Install CRDs + operator into the current-context cluster.
-make install
+# Run the controller from your laptop against the current kubeconfig:
+make install   # apply CRDs
+make run       # run the controller in the foreground
 
-# 2. Run the operator from your laptop against that cluster.
-make run
-
-# 3. Apply the sample AgentClass and a Task.
-kubectl apply -k config/samples/
-kubectl get tasks -w
-```
-
-Deploying inside the cluster:
-
-```sh
-export IMG=<registry>/openconveyor:<tag>
+# Or build + push your own image and deploy it inside the cluster:
+export IMG=<registry>/conveyor:<tag>
 make docker-build docker-push IMG=$IMG
 make deploy                   IMG=$IMG
 ```
