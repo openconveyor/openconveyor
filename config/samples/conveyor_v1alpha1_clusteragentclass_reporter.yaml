@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: claude-code-reporter
 spec:
-  image: ghcr.io/openconveyor/agent-claude-reporter:latest
+  image: ghcr.io/openconveyor/agent-claude-reporter:v0.1.0
   imagePullPolicy: IfNotPresent
   inputs:
     # The agent's entrypoint reads /task/prompt for the reporting instruction.

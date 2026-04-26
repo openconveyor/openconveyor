@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-04-26
+
+First public alpha release. Installable in one command:
+
+```sh
+kubectl apply -f https://github.com/openconveyor/openconveyor/releases/download/v0.1.0/install.yaml
+```
+
+Multi-arch images (`linux/amd64` + `linux/arm64`) for the controller
+and the three reference agents are published to
+`ghcr.io/openconveyor/{conveyor,agent-claude-implementer,agent-claude-reviewer,agent-claude-reporter}:v0.1.0`.
+
 ### Added
 
 - **Task CRD** (`openconveyor.ai/v1alpha1`) — declares an agent
@@ -97,4 +109,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Links
 
-- [Unreleased]: https://github.com/openconveyor/openconveyor/commits/main
+- [Unreleased]: https://github.com/openconveyor/openconveyor/compare/v0.1.0...HEAD
+- [0.1.0]: https://github.com/openconveyor/openconveyor/releases/tag/v0.1.0
