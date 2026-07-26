@@ -9,6 +9,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -118,7 +119,14 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	if err := r.ensureNetworkPolicy(ctx, &task, effectiveEgress); err != nil {
 		metrics.ObserveReconcileError(metrics.StepNetworkPolicy)
-		return ctrl.Result{}, r.markInvalid(ctx, &task, reasonEgressResolveFail, err.Error())
+		// Only unfixable egress entries (bad CIDR, NXDOMAIN) fail the Task.
+		// Transient resolver or API errors are returned so controller-runtime
+		// requeues with backoff instead of wedging the Task in Failed.
+		var perm *policy.PermanentError
+		if errors.As(err, &perm) {
+			return ctrl.Result{}, r.markInvalid(ctx, &task, reasonEgressResolveFail, err.Error())
+		}
+		return ctrl.Result{}, fmt.Errorf("ensure network policy: %w", err)
 	}
 
 	if err := r.ensurePromptConfigMap(ctx, &task); err != nil {

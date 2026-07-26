@@ -9,6 +9,7 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sort"
@@ -19,6 +20,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
+
+// PermanentError marks an egress entry problem that retrying cannot fix:
+// a malformed CIDR or a hostname that authoritatively does not exist
+// (NXDOMAIN). Anything else — resolver timeouts, SERVFAIL, network blips —
+// is left unwrapped so callers retry instead of failing the Task.
+type PermanentError struct {
+	Err error
+}
+
+func (e *PermanentError) Error() string { return e.Err.Error() }
+func (e *PermanentError) Unwrap() error { return e.Err }
 
 // Resolver abstracts DNS lookup so tests can inject fixed results.
 type Resolver interface {
@@ -109,7 +121,7 @@ func resolveEgress(ctx context.Context, resolver Resolver, egress []string) ([]s
 
 		if strings.Contains(entry, "/") {
 			if _, _, err := net.ParseCIDR(entry); err != nil {
-				return nil, fmt.Errorf("egress entry %q: invalid CIDR: %w", entry, err)
+				return nil, &PermanentError{Err: fmt.Errorf("egress entry %q: invalid CIDR: %w", entry, err)}
 			}
 			set[entry] = struct{}{}
 			continue
@@ -122,7 +134,12 @@ func resolveEgress(ctx context.Context, resolver Resolver, egress []string) ([]s
 
 		addrs, err := resolver.LookupHost(ctx, entry)
 		if err != nil {
-			return nil, fmt.Errorf("egress entry %q: lookup failed: %w", entry, err)
+			wrapped := fmt.Errorf("egress entry %q: lookup failed: %w", entry, err)
+			var dnsErr *net.DNSError
+			if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+				return nil, &PermanentError{Err: wrapped}
+			}
+			return nil, wrapped
 		}
 		for _, a := range addrs {
 			if ip := net.ParseIP(a); ip != nil {

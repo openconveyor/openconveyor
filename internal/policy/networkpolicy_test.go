@@ -6,7 +6,9 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"testing"
 
@@ -120,13 +122,55 @@ func TestBuildNetworkPolicy_InvalidCIDR(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on invalid CIDR")
 	}
+	var perm *PermanentError
+	if !errors.As(err, &perm) {
+		t.Errorf("invalid CIDR must be a PermanentError, got %T: %v", err, err)
+	}
 }
 
 func TestBuildNetworkPolicy_ResolverError(t *testing.T) {
-	resolver := stubResolver{err: fmt.Errorf("dns down")}
-	_, err := BuildNetworkPolicy(context.Background(), resolver, "demo", "ns", []string{"api.example.com"})
-	if err == nil {
-		t.Fatal("expected error when resolver fails")
+	tests := []struct {
+		name          string
+		err           error
+		wantPermanent bool
+	}{
+		{
+			name:          "NXDOMAIN → permanent",
+			err:           &net.DNSError{Err: "no such host", Name: "gone.example.com", IsNotFound: true},
+			wantPermanent: true,
+		},
+		{
+			name:          "DNS timeout → transient",
+			err:           &net.DNSError{Err: "i/o timeout", Name: "api.example.com", IsTimeout: true, IsTemporary: true},
+			wantPermanent: false,
+		},
+		{
+			name:          "SERVFAIL → transient",
+			err:           &net.DNSError{Err: "server misbehaving", Name: "api.example.com", IsTemporary: true},
+			wantPermanent: false,
+		},
+		{
+			name:          "unknown resolver error → transient",
+			err:           fmt.Errorf("dns down"),
+			wantPermanent: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver := stubResolver{err: tc.err}
+			_, err := BuildNetworkPolicy(context.Background(), resolver, "demo", "ns", []string{"api.example.com"})
+			if err == nil {
+				t.Fatal("expected error when resolver fails")
+			}
+			var perm *PermanentError
+			if got := errors.As(err, &perm); got != tc.wantPermanent {
+				t.Errorf("PermanentError: got %v want %v (err: %v)", got, tc.wantPermanent, err)
+			}
+			if !errors.Is(err, tc.err) {
+				t.Errorf("original error must stay unwrappable, got %v", err)
+			}
+		})
 	}
 }
 

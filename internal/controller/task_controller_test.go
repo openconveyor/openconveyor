@@ -9,6 +9,7 @@ package controller
 
 import (
 	"context"
+	"net"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -29,9 +30,13 @@ import (
 
 type fakeResolver struct {
 	table map[string][]string
+	err   error
 }
 
 func (f fakeResolver) LookupHost(_ context.Context, host string) ([]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.table[host], nil
 }
 
@@ -474,6 +479,64 @@ var _ = Describe("Task Controller", func() {
 				"terminal Task must not get a new Job")
 			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
 			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseCompleted))
+		})
+	})
+
+	Context("egress resolution failures", func() {
+		egressTask := func() *conveyorv1alpha1.Task {
+			return &conveyorv1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
+				Spec: conveyorv1alpha1.TaskSpec{
+					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
+					Prompt: conveyorv1alpha1.PromptSource{Inline: "hi"},
+					Permissions: conveyorv1alpha1.Permissions{
+						Egress: []string{"api.example.com"},
+					},
+					Resources: conveyorv1alpha1.TaskResources{
+						Timeout: metav1.Duration{Duration: time.Minute},
+					},
+				},
+			}
+		}
+
+		It("retries instead of failing the Task on a transient resolver error", func() {
+			Expect(k8sClient.Create(ctx, egressTask())).To(Succeed())
+
+			By("reconciling with a resolver that times out")
+			broken := reconciler()
+			broken.Resolver = fakeResolver{
+				err: &net.DNSError{Err: "i/o timeout", Name: "api.example.com", IsTimeout: true, IsTemporary: true},
+			}
+			_, err := broken.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).To(HaveOccurred(), "transient error must be returned for backoff requeue")
+
+			var got conveyorv1alpha1.Task
+			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
+			Expect(got.Status.Phase).NotTo(Equal(conveyorv1alpha1.TaskPhaseFailed),
+				"transient DNS blip must not wedge the Task in Failed")
+
+			By("reconciling again once DNS recovers")
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed(), "Task proceeds normally after retry")
+		})
+
+		It("marks the Task Failed when the hostname does not exist", func() {
+			Expect(k8sClient.Create(ctx, egressTask())).To(Succeed())
+
+			broken := reconciler()
+			broken.Resolver = fakeResolver{
+				err: &net.DNSError{Err: "no such host", Name: "api.example.com", IsNotFound: true},
+			}
+			_, err := broken.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			var got conveyorv1alpha1.Task
+			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
+			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseFailed))
+			Expect(got.Status.Conditions[0].Reason).To(Equal(reasonEgressResolveFail))
 		})
 	})
 
