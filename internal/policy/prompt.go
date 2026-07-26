@@ -71,7 +71,6 @@ func BuildPromptProjection(
 
 	mountPath := inputs.Prompt.Mount
 	vol := &corev1.Volume{Name: PromptVolumeName}
-	readOnly := true
 
 	var subPath string
 	switch {
@@ -113,7 +112,7 @@ func BuildPromptProjection(
 			Name:      PromptVolumeName,
 			MountPath: mountPath,
 			SubPath:   subPath,
-			ReadOnly:  readOnly,
+			ReadOnly:  true,
 		},
 	}, nil
 }

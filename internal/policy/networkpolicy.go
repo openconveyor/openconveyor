@@ -11,8 +11,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 )
 
 // Resolver abstracts DNS lookup so tests can inject fixed results.
@@ -151,12 +153,7 @@ func resolveEgress(ctx context.Context, resolver Resolver, egress []string) ([]s
 		}
 	}
 
-	out := make([]string, 0, len(set))
-	for c := range set {
-		out = append(out, c)
-	}
-	sort.Strings(out)
-	return out, nil
+	return slices.Sorted(maps.Keys(set)), nil
 }
 
 // lookupWithTimeout resolves one host under lookupTimeout. Timeouts are
@@ -188,9 +185,7 @@ func toIPBlocks(cidrs []string) []networkingv1.NetworkPolicyPeer {
 // kube-system — the stock CoreDNS label set on every mainstream k8s distro.
 // Without this rule the pod cannot resolve the names the user listed.
 func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
-	udp := corev1.ProtocolUDP
-	tcp := corev1.ProtocolTCP
-	port := intstr.FromInt32(dnsPort)
+	port := ptr.To(intstr.FromInt32(dnsPort))
 	return networkingv1.NetworkPolicyEgressRule{
 		To: []networkingv1.NetworkPolicyPeer{
 			{
@@ -203,8 +198,8 @@ func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 			},
 		},
 		Ports: []networkingv1.NetworkPolicyPort{
-			{Protocol: &udp, Port: &port},
-			{Protocol: &tcp, Port: &port},
+			{Protocol: ptr.To(corev1.ProtocolUDP), Port: port},
+			{Protocol: ptr.To(corev1.ProtocolTCP), Port: port},
 		},
 	}
 }

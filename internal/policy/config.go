@@ -11,8 +11,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
+	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -88,11 +90,7 @@ func BuildConfigProjection(
 	hasMount := inputs.Config != nil && inputs.Config.Mount != ""
 	hasWholeEnv := inputs.Config != nil && inputs.Config.Env != ""
 
-	keys := make([]string, 0, len(fields))
-	for k := range fields {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := slices.Sorted(maps.Keys(fields))
 
 	var envs []corev1.EnvVar
 	for _, k := range keys {
@@ -180,7 +178,7 @@ func scalarString(v any) (string, bool) {
 	case json.Number:
 		return t.String(), true
 	case bool:
-		return fmt.Sprintf("%t", t), true
+		return strconv.FormatBool(t), true
 	default:
 		return "", false
 	}

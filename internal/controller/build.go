@@ -8,6 +8,7 @@ you may not use this file except in compliance with the License.
 package controller
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 
@@ -15,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 	"github.com/openconveyor/openconveyor/internal/policy"
@@ -73,16 +75,6 @@ func buildJob(
 	agent *conveyorv1alpha1.ClusterAgentClass,
 	effectiveSecrets []string,
 ) (*batchv1.Job, error) {
-	timeoutSeconds := int64(task.Spec.Resources.Timeout.Seconds())
-	backoffLimit := int32(0)
-	ttl := defaultTTLSeconds
-	runAsNonRoot := true
-	runAsUser := nonRootUID
-	runAsGroup := nonRootUID
-	readOnlyRoot := true
-	allowPrivEsc := false
-	automount := policy.NeedsServiceAccountToken(task.Spec.Permissions.RBAC)
-
 	secretVolumes, secretMounts := policy.BuildSecretVolumes(effectiveSecrets)
 	prompt, err := policy.BuildPromptProjection(task.Name, task.Spec.Prompt, agent.Spec.Inputs)
 	if err != nil {
@@ -126,17 +118,17 @@ func buildJob(
 	container := corev1.Container{
 		Name:            agentContainerName,
 		Image:           agent.Spec.Image,
-		ImagePullPolicy: corev1.PullPolicy(defaultString(agent.Spec.ImagePullPolicy, string(corev1.PullIfNotPresent))),
+		ImagePullPolicy: corev1.PullPolicy(cmp.Or(agent.Spec.ImagePullPolicy, string(corev1.PullIfNotPresent))),
 		Command:         agent.Spec.Command,
 		Args:            agent.Spec.Args,
 		Env:             config.Env,
 		Resources:       resourceReqs,
 		SecurityContext: &corev1.SecurityContext{
-			RunAsNonRoot:             &runAsNonRoot,
-			RunAsUser:                &runAsUser,
-			RunAsGroup:               &runAsGroup,
-			ReadOnlyRootFilesystem:   &readOnlyRoot,
-			AllowPrivilegeEscalation: &allowPrivEsc,
+			RunAsNonRoot:             ptr.To(true),
+			RunAsUser:                ptr.To(nonRootUID),
+			RunAsGroup:               ptr.To(nonRootUID),
+			ReadOnlyRootFilesystem:   ptr.To(true),
+			AllowPrivilegeEscalation: ptr.To(false),
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{"ALL"},
 			},
@@ -154,7 +146,7 @@ func buildJob(
 		Spec: corev1.PodSpec{
 			RestartPolicy:                corev1.RestartPolicyNever,
 			ServiceAccountName:           taskResourceName(task),
-			AutomountServiceAccountToken: &automount,
+			AutomountServiceAccountToken: ptr.To(policy.NeedsServiceAccountToken(task.Spec.Permissions.RBAC)),
 			Containers:                   []corev1.Container{container},
 			Volumes:                      volumes,
 		},
@@ -167,9 +159,9 @@ func buildJob(
 			Labels:    ownershipLabels(task),
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit:            &backoffLimit,
-			ActiveDeadlineSeconds:   &timeoutSeconds,
-			TTLSecondsAfterFinished: &ttl,
+			BackoffLimit:            ptr.To(int32(0)),
+			ActiveDeadlineSeconds:   ptr.To(int64(task.Spec.Resources.Timeout.Seconds())),
+			TTLSecondsAfterFinished: ptr.To(defaultTTLSeconds),
 			Template:                pod,
 		},
 	}, nil
@@ -227,11 +219,4 @@ func podLabels(task *conveyorv1alpha1.Task) map[string]string {
 	// explicit in case the policy package splits them in the future.
 	maps.Copy(labels, policy.PodSelectorLabels(task.Name))
 	return labels
-}
-
-func defaultString(s, fallback string) string {
-	if s == "" {
-		return fallback
-	}
-	return s
 }
