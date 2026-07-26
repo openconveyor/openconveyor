@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -25,7 +26,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 	"github.com/openconveyor/openconveyor/internal/metrics"
@@ -43,6 +46,14 @@ const (
 	reasonFailed            = "Failed"
 	reasonTimedOut          = "TimedOut"
 	reasonEgressResolveFail = "EgressResolveFailed"
+
+	// taskAgentRefIndex indexes Tasks by spec.agent.ref so the
+	// ClusterAgentClass watch can find the Tasks that reference it.
+	taskAgentRefIndex = ".spec.agent.ref"
+
+	// agentClassMissingRequeue is a safety-net requeue for Tasks waiting
+	// on a ClusterAgentClass; the watch is the primary wake-up signal.
+	agentClassMissingRequeue = 30 * time.Second
 )
 
 // TaskReconciler reconciles a Task object.
@@ -91,9 +102,16 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	var agent conveyorv1alpha1.ClusterAgentClass
 	if err := r.Get(ctx, types.NamespacedName{Name: task.Spec.Agent.Ref}, &agent); err != nil {
 		if apierrors.IsNotFound(err) {
+			// Task-before-class ordering is the normal case with GitOps
+			// sync waves and webhook-created Tasks, so a missing class is
+			// a wait-state, not a terminal failure. The ClusterAgentClass
+			// watch re-enqueues this Task when the class appears; the
+			// requeue is a safety net.
 			metrics.ObserveReconcileError(metrics.StepAgentClassLookup)
-			return ctrl.Result{}, r.markInvalid(ctx, &task, reasonAgentClassMissing,
-				fmt.Sprintf("ClusterAgentClass %q not found", task.Spec.Agent.Ref))
+			if err := r.markWaitingForAgentClass(ctx, &task); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: agentClassMissingRequeue}, nil
 		}
 		metrics.ObserveReconcileError(metrics.StepAgentClassLookup)
 		return ctrl.Result{}, err
@@ -445,6 +463,29 @@ func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1
 	return r.Status().Update(ctx, task)
 }
 
+// markWaitingForAgentClass records that the Task is waiting for its
+// ClusterAgentClass to be created. Unlike markInvalid this keeps the
+// Task in Pending so it picks up where it left off once the class
+// exists. The status update is skipped when nothing changed so the
+// periodic requeue doesn't spam the API server.
+func (r *TaskReconciler) markWaitingForAgentClass(ctx context.Context, task *conveyorv1alpha1.Task) error {
+	before := task.Status.DeepCopy()
+	task.Status.Phase = conveyorv1alpha1.TaskPhasePending
+	task.Status.ObservedGeneration = task.Generation
+	setCondition(&task.Status.Conditions, metav1.Condition{
+		Type:               conditionReady,
+		Status:             metav1.ConditionUnknown,
+		Reason:             reasonAgentClassMissing,
+		Message:            fmt.Sprintf("Waiting for ClusterAgentClass %q to be created", task.Spec.Agent.Ref),
+		ObservedGeneration: task.Generation,
+		LastTransitionTime: metav1.Now(),
+	})
+	if equalStatus(before, &task.Status) {
+		return nil
+	}
+	return r.Status().Update(ctx, task)
+}
+
 func setCondition(conds *[]metav1.Condition, new metav1.Condition) {
 	for i, c := range *conds {
 		if c.Type != new.Type {
@@ -492,8 +533,39 @@ func timesEqual(a, b *metav1.Time) bool {
 	}
 }
 
-// SetupWithManager wires the reconciler up to watch Tasks and owned Jobs.
+// tasksForAgentClass maps a ClusterAgentClass event to the non-terminal
+// Tasks that reference it, so Tasks created before their class start
+// reconciling as soon as the class appears.
+func (r *TaskReconciler) tasksForAgentClass(ctx context.Context, obj client.Object) []reconcile.Request {
+	var tasks conveyorv1alpha1.TaskList
+	if err := r.List(ctx, &tasks, client.MatchingFields{taskAgentRefIndex: obj.GetName()}); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to list Tasks for ClusterAgentClass", "clusterAgentClass", obj.GetName())
+		return nil
+	}
+	var reqs []reconcile.Request
+	for i := range tasks.Items {
+		if isTerminal(tasks.Items[i].Status.Phase) {
+			continue
+		}
+		reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&tasks.Items[i])})
+	}
+	return reqs
+}
+
+// SetupWithManager wires the reconciler up to watch Tasks, owned Jobs,
+// and the ClusterAgentClasses that Tasks reference.
 func (r *TaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &conveyorv1alpha1.Task{}, taskAgentRefIndex,
+		func(obj client.Object) []string {
+			task := obj.(*conveyorv1alpha1.Task)
+			if task.Spec.Agent.Ref == "" {
+				return nil
+			}
+			return []string{task.Spec.Agent.Ref}
+		}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&conveyorv1alpha1.Task{}).
 		Owns(&batchv1.Job{}, builder.WithPredicates()).
@@ -502,6 +574,7 @@ func (r *TaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		Watches(&conveyorv1alpha1.ClusterAgentClass{}, handler.EnqueueRequestsFromMapFunc(r.tasksForAgentClass)).
 		Named("task").
 		Complete(r)
 }
