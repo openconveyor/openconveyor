@@ -43,10 +43,17 @@ const maxBodyBytes = 1 << 20
 // manager never opens a cluster-wide Secret watch; HMAC key lookups are
 // low-volume live reads.
 type Handler struct {
-	Client    client.Client
-	Namespace string // namespace where HMAC Secrets live (usually the adapter's)
-	Log       logr.Logger
+	Client client.Client
+	// SecretNamespace is where the HMAC Secrets referenced by
+	// ClusterTriggerClasses live (usually the adapter's own namespace).
+	SecretNamespace string
+	// DefaultTaskNamespace receives emitted Tasks whose template leaves
+	// the namespace unset.
+	DefaultTaskNamespace string
+	Log                  logr.Logger
 }
+
+var _ http.Handler = (*Handler)(nil)
 
 // +kubebuilder:rbac:groups=openconveyor.ai,resources=clustertriggerclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
@@ -137,11 +144,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusBadRequest, "build task: "+err.Error())
 		return
 	}
-	// Default the emitted Task's namespace to the adapter's own when the
-	// template left it unset — avoids accidentally dumping Tasks into
-	// "default" on clusters where that namespace is unused.
+	// Default the emitted Task's namespace when the template left it
+	// unset — avoids accidentally dumping Tasks into "default" on
+	// clusters where that namespace is unused.
 	if task.Namespace == "" {
-		task.Namespace = h.Namespace
+		task.Namespace = h.DefaultTaskNamespace
 	}
 
 	if err := h.Client.Create(r.Context(), task); err != nil {
@@ -194,7 +201,7 @@ func (h *Handler) lookupSignatureSecret(ctx context.Context, ctc *conveyorv1alph
 		return nil, fmt.Errorf("signature.secretRef is incomplete")
 	}
 	var secret corev1.Secret
-	key := types.NamespacedName{Name: ref.Name, Namespace: h.Namespace}
+	key := types.NamespacedName{Name: ref.Name, Namespace: h.SecretNamespace}
 	if err := h.Client.Get(ctx, key, &secret); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("secret %s/%s not found: %w", key.Namespace, key.Name, err)

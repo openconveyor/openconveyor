@@ -34,6 +34,10 @@ const (
 	// scratchVolumeName is an emptyDir mounted at /tmp so agents have a
 	// writable path despite readOnlyRootFilesystem.
 	scratchVolumeName = "scratch"
+
+	// agentContainerName is the single container in every Task Job. Part
+	// of the user-facing contract: `kubectl logs <job-pod> -c agent`.
+	agentContainerName = "agent"
 )
 
 // buildServiceAccount returns the Task's dedicated ServiceAccount. Token
@@ -120,7 +124,7 @@ func buildJob(
 	}
 
 	container := corev1.Container{
-		Name:            "agent",
+		Name:            agentContainerName,
 		Image:           agent.Spec.Image,
 		ImagePullPolicy: corev1.PullPolicy(defaultString(agent.Spec.ImagePullPolicy, string(corev1.PullIfNotPresent))),
 		Command:         agent.Spec.Command,
@@ -211,15 +215,14 @@ func taskResourceName(task *conveyorv1alpha1.Task) string {
 // and what the pod advertises.
 func ownershipLabels(task *conveyorv1alpha1.Task) map[string]string {
 	labels := policy.OwnershipLabels(task.Name)
-	labels["app.kubernetes.io/component"] = "task"
+	labels[policy.LabelComponent] = policy.ComponentTask
 	return labels
 }
 
 // podLabels are the labels on the pod template itself. Must include the
 // selector labels used by the Task's NetworkPolicy.
 func podLabels(task *conveyorv1alpha1.Task) map[string]string {
-	labels := policy.OwnershipLabels(task.Name)
-	labels["app.kubernetes.io/component"] = "task"
+	labels := ownershipLabels(task)
 	// PodSelectorLabels is already a subset of OwnershipLabels, but be
 	// explicit in case the policy package splits them in the future.
 	maps.Copy(labels, policy.PodSelectorLabels(task.Name))

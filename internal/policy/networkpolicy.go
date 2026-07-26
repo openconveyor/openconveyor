@@ -35,9 +35,21 @@ const lookupTimeout = 5 * time.Second
 // DefaultResolver uses the process's default net.Resolver.
 type DefaultResolver struct{}
 
+var _ Resolver = DefaultResolver{}
+
 func (DefaultResolver) LookupHost(ctx context.Context, host string) ([]string, error) {
 	return net.DefaultResolver.LookupHost(ctx, host)
 }
+
+// DNS egress target: the stock CoreDNS label set on every mainstream
+// k8s distro, reached on the standard DNS port.
+const (
+	dnsPort              = 53
+	kubeSystemNamespace  = "kube-system"
+	namespaceNameLabel   = "kubernetes.io/metadata.name"
+	kubeDNSSelectorKey   = "k8s-app"
+	kubeDNSSelectorValue = "kube-dns"
+)
 
 // BuildNetworkPolicy produces a NetworkPolicy that applies default-deny
 // to the Task's pod. The policy is always emitted (never nil) so every
@@ -178,21 +190,21 @@ func toIPBlocks(cidrs []string) []networkingv1.NetworkPolicyPeer {
 func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 	udp := corev1.ProtocolUDP
 	tcp := corev1.ProtocolTCP
-	port53 := intstr.FromInt(53)
+	port := intstr.FromInt32(dnsPort)
 	return networkingv1.NetworkPolicyEgressRule{
 		To: []networkingv1.NetworkPolicyPeer{
 			{
 				NamespaceSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"},
+					MatchLabels: map[string]string{namespaceNameLabel: kubeSystemNamespace},
 				},
 				PodSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{"k8s-app": "kube-dns"},
+					MatchLabels: map[string]string{kubeDNSSelectorKey: kubeDNSSelectorValue},
 				},
 			},
 		},
 		Ports: []networkingv1.NetworkPolicyPort{
-			{Protocol: &udp, Port: &port53},
-			{Protocol: &tcp, Port: &port53},
+			{Protocol: &udp, Port: &port},
+			{Protocol: &tcp, Port: &port},
 		},
 	}
 }

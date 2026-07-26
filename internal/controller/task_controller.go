@@ -49,6 +49,8 @@ type TaskReconciler struct {
 	Resolver policy.Resolver
 }
 
+var _ reconcile.Reconciler = (*TaskReconciler)(nil)
+
 // +kubebuilder:rbac:groups=openconveyor.ai,resources=tasks,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=openconveyor.ai,resources=tasks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=openconveyor.ai,resources=tasks/finalizers,verbs=update
@@ -125,8 +127,8 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			func(ctx context.Context) error { return r.ensureNetworkPolicy(ctx, &task, effectiveEgress) }},
 		{metrics.StepPromptConfigMap, "ensure prompt configmap", "",
 			func(ctx context.Context) error { return r.ensurePromptConfigMap(ctx, &task) }},
-		{metrics.StepConfigConfigMap, "ensure config configmap", "",
-			func(ctx context.Context) error { return r.ensureConfigConfigMap(ctx, &task, &agent) }},
+		{metrics.StepAgentConfigMap, "ensure config configmap", "",
+			func(ctx context.Context) error { return r.ensureAgentConfigMap(ctx, &task, &agent) }},
 	}
 	for _, step := range steps {
 		if err := step.run(ctx); err != nil {
@@ -287,21 +289,21 @@ func (r *TaskReconciler) ensurePromptConfigMap(ctx context.Context, task *convey
 	})
 }
 
-// ensureConfigConfigMap owns the ConfigMap that carries spec.agent.config
+// ensureAgentConfigMap owns the ConfigMap that carries spec.agent.config
 // for agents that declare a config mount. Upserted when needed, deleted
 // when the Task has no config (or the agent no longer mounts it) so stale
 // content does not linger.
-func (r *TaskReconciler) ensureConfigConfigMap(
+func (r *TaskReconciler) ensureAgentConfigMap(
 	ctx context.Context,
 	task *conveyorv1alpha1.Task,
 	agent *conveyorv1alpha1.ClusterAgentClass,
 ) error {
 	key := types.NamespacedName{
-		Name:      policy.ConfigConfigMapName(task.Name),
+		Name:      policy.AgentConfigMapName(task.Name),
 		Namespace: task.Namespace,
 	}
 
-	desired := policy.BuildConfigConfigMap(task.Name, task.Namespace, task.Spec.Agent.Config, agent.Spec.Inputs)
+	desired := policy.BuildAgentConfigMap(task.Name, task.Namespace, task.Spec.Agent.Config, agent.Spec.Inputs)
 	if desired == nil {
 		return r.deleteIfExists(ctx, key, &corev1.ConfigMap{})
 	}

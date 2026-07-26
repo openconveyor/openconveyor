@@ -43,7 +43,12 @@ func newFakeClient(t *testing.T, initial ...client.Object) client.Client {
 }
 
 func newHandler(c client.Client) *Handler {
-	return &Handler{Client: c, Namespace: adapterNamespace, Log: logr.Discard()}
+	return &Handler{
+		Client:               c,
+		SecretNamespace:      adapterNamespace,
+		DefaultTaskNamespace: adapterNamespace,
+		Log:                  logr.Discard(),
+	}
 }
 
 // githubTriggerClass returns a realistic ClusterTriggerClass for a GitHub

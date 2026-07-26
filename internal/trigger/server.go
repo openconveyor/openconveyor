@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 // Server is a manager.Runnable that binds an HTTP listener and serves
@@ -27,6 +28,14 @@ type Server struct {
 	Handler *Handler
 	Log     logr.Logger
 }
+
+// The LeaderElectionRunnable assert matters most: NeedLeaderElection is
+// duck-typed, so a signature typo would silently gate the server behind
+// leader election instead of failing to compile.
+var (
+	_ manager.Runnable               = (*Server)(nil)
+	_ manager.LeaderElectionRunnable = (*Server)(nil)
+)
 
 // NeedLeaderElection tells controller-runtime to run the trigger server
 // on every replica, not just the leader. Webhook traffic balanced by a

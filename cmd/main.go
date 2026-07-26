@@ -211,9 +211,10 @@ func main() {
 			Addr: triggerAddr,
 			Log:  ctrl.Log.WithName("trigger"),
 			Handler: &trigger.Handler{
-				Client:    mgr.GetClient(),
-				Namespace: ns,
-				Log:       ctrl.Log.WithName("trigger"),
+				Client:               mgr.GetClient(),
+				SecretNamespace:      ns,
+				DefaultTaskNamespace: ns,
+				Log:                  ctrl.Log.WithName("trigger"),
 			},
 		}
 		if err := mgr.Add(triggerServer); err != nil {
@@ -239,8 +240,13 @@ func main() {
 	}
 }
 
+// defaultTriggerNamespace is the fallback namespace for signature
+// Secret lookups and emitted Tasks when neither the flag nor
+// POD_NAMESPACE is set. Matches the release manifests' namespace.
+const defaultTriggerNamespace = "conveyor-system"
+
 // resolveTriggerNamespace picks the namespace for signature Secret lookups.
-// Priority: explicit flag > POD_NAMESPACE (downward API) > "conveyor-system".
+// Priority: explicit flag > POD_NAMESPACE (downward API) > defaultTriggerNamespace.
 func resolveTriggerNamespace(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
@@ -248,5 +254,5 @@ func resolveTriggerNamespace(flagValue string) string {
 	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
 		return ns
 	}
-	return "conveyor-system"
+	return defaultTriggerNamespace
 }

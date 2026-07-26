@@ -90,7 +90,7 @@ func derivePhase(job *batchv1.Job) (conveyorv1alpha1.TaskPhase, string, string) 
 		case batchv1.JobComplete, batchv1.JobSuccessCriteriaMet:
 			return conveyorv1alpha1.TaskPhaseCompleted, reasonCompleted, c.Message
 		case batchv1.JobFailed:
-			if c.Reason == "DeadlineExceeded" {
+			if c.Reason == batchv1.JobReasonDeadlineExceeded {
 				return conveyorv1alpha1.TaskPhaseTimedOut, reasonTimedOut, c.Message
 			}
 			return conveyorv1alpha1.TaskPhaseFailed, reasonFailed, c.Message

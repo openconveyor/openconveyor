@@ -105,7 +105,7 @@ var _ = Describe("Task Controller", func() {
 			_ = k8sClient.Delete(ctx, obj, deleteOpts)
 		}
 		// The prompt and config ConfigMaps have different names — handle separately.
-		for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.ConfigConfigMapName(taskName)} {
+		for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.AgentConfigMapName(taskName)} {
 			cm := &corev1.ConfigMap{}
 			cm.SetName(name)
 			cm.SetNamespace(taskNamespace)
@@ -117,7 +117,7 @@ var _ = Describe("Task Controller", func() {
 					return false
 				}
 			}
-			for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.ConfigConfigMapName(taskName)} {
+			for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.AgentConfigMapName(taskName)} {
 				cmKey := types.NamespacedName{Name: name, Namespace: taskNamespace}
 				if err := k8sClient.Get(ctx, cmKey, &corev1.ConfigMap{}); !apierrors.IsNotFound(err) {
 					return false
@@ -635,7 +635,7 @@ var _ = Describe("Task Controller", func() {
 
 			By("owning a ConfigMap that carries the config JSON")
 			var cm corev1.ConfigMap
-			cmKey := types.NamespacedName{Name: policy.ConfigConfigMapName(taskName), Namespace: taskNamespace}
+			cmKey := types.NamespacedName{Name: policy.AgentConfigMapName(taskName), Namespace: taskNamespace}
 			Expect(k8sClient.Get(ctx, cmKey, &cm)).To(Succeed())
 			Expect(cm.Data[policy.ConfigKey]).To(MatchJSON(`{"TARGET_REPO":"o/r","nested":{"a":1}}`))
 			Expect(cm.OwnerReferences).To(HaveLen(1))

@@ -31,11 +31,15 @@ const PromptKey = "prompt"
 // PromptVolumeName is the pod-level volume name that carries the prompt.
 const PromptVolumeName = "prompt"
 
+// promptSuffix distinguishes the prompt ConfigMap from the Task's main
+// resource name and the agent-config ConfigMap.
+const promptSuffix = "-prompt"
+
 // InlinePromptConfigMapName returns the name of the owned ConfigMap that
 // holds an inline prompt. Separate from the Task's main resource name so
 // it does not collide with the SA / Role / Job sharing `<task-name>`.
 func InlinePromptConfigMapName(taskName string) string {
-	return taskName + "-prompt"
+	return taskName + promptSuffix
 }
 
 // BuildPromptProjection returns the volume and volume-mount that project

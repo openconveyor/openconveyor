@@ -14,8 +14,10 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // controller and policy package agree on the same label schema.
 const (
 	LabelManagedBy = "app.kubernetes.io/managed-by"
+	LabelComponent = "app.kubernetes.io/component"
 	LabelTaskName  = "openconveyor.ai/task"
 	ManagedByValue = "conveyor"
+	ComponentTask  = "task"
 )
 
 // PodSelectorLabels are the labels used for NetworkPolicy.podSelector

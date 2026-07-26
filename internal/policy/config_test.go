@@ -84,7 +84,7 @@ func TestBuildConfigProjection_UnprojectableFieldSkippedWithMount(t *testing.T) 
 	if proj.Volume == nil || proj.Mount == nil {
 		t.Fatal("expected volume + mount for declared config mount")
 	}
-	if proj.Volume.ConfigMap == nil || proj.Volume.ConfigMap.Name != ConfigConfigMapName("task-1") {
+	if proj.Volume.ConfigMap == nil || proj.Volume.ConfigMap.Name != AgentConfigMapName("task-1") {
 		t.Errorf("volume should reference the owned config ConfigMap, got %+v", proj.Volume.VolumeSource)
 	}
 	if proj.Mount.MountPath != "/task/config.json" || proj.Mount.SubPath != ConfigKey || !proj.Mount.ReadOnly {
@@ -111,24 +111,24 @@ func TestBuildConfigProjection_WholeJSONEnv(t *testing.T) {
 	}
 }
 
-func TestBuildConfigConfigMap(t *testing.T) {
+func TestBuildAgentConfigMap(t *testing.T) {
 	cfg := rawConfig(`{"A":"b"}`)
 	mountInputs := conveyorv1alpha1.AgentInputs{
 		Config: &conveyorv1alpha1.AgentInputMount{Mount: "/task/config.json"},
 	}
 
-	if cm := BuildConfigConfigMap("task-1", "ns", nil, mountInputs); cm != nil {
+	if cm := BuildAgentConfigMap("task-1", "ns", nil, mountInputs); cm != nil {
 		t.Errorf("expected nil ConfigMap for nil config, got %+v", cm)
 	}
-	if cm := BuildConfigConfigMap("task-1", "ns", cfg, conveyorv1alpha1.AgentInputs{}); cm != nil {
+	if cm := BuildAgentConfigMap("task-1", "ns", cfg, conveyorv1alpha1.AgentInputs{}); cm != nil {
 		t.Errorf("expected nil ConfigMap without a declared mount, got %+v", cm)
 	}
 
-	cm := BuildConfigConfigMap("task-1", "ns", cfg, mountInputs)
+	cm := BuildAgentConfigMap("task-1", "ns", cfg, mountInputs)
 	if cm == nil {
 		t.Fatal("expected a ConfigMap")
 	}
-	if cm.Name != ConfigConfigMapName("task-1") || cm.Namespace != "ns" {
+	if cm.Name != AgentConfigMapName("task-1") || cm.Namespace != "ns" {
 		t.Errorf("unexpected ObjectMeta: %+v", cm.ObjectMeta)
 	}
 	if cm.Data[ConfigKey] != `{"A":"b"}` {

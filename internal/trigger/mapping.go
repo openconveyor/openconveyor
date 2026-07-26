@@ -20,6 +20,11 @@ import (
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 )
 
+// defaultGenerateNamePrefix mirrors the CRD default for
+// spec.task.generateNamePrefix (clustertriggerclass_types.go) so Tasks
+// built from templates that predate the default still get a prefix.
+const defaultGenerateNamePrefix = "task-"
+
 // ApplyFilters returns true when every filter matches the body. Filters
 // are ANDed; a zero-length slice matches everything. Matching compares
 // the gjson result's String() form to filter.Equals — adequate for the
@@ -54,7 +59,7 @@ func BuildTask(tmpl conveyorv1alpha1.TaskTemplate, body []byte) (*conveyorv1alph
 
 	prefix := tmpl.GenerateNamePrefix
 	if prefix == "" {
-		prefix = "task-"
+		prefix = defaultGenerateNamePrefix
 	}
 	task.GenerateName = prefix
 

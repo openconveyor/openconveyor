@@ -16,6 +16,10 @@ import (
 	"strings"
 )
 
+// algorithmSHA256 is the only supported signature algorithm; the CRD
+// defaults spec.signature.algorithm to it (clustertriggerclass_types.go).
+const algorithmSHA256 = "sha256"
+
 // VerifyHMAC compares a provided header signature against HMAC(secret, body).
 //
 // `algorithm` accepts "sha256" (blank is treated as sha256 since the CRD
@@ -38,7 +42,7 @@ func VerifyHMAC(algorithm, prefix, headerValue string, secret, body []byte) erro
 
 	var h hash.Hash
 	switch strings.ToLower(strings.TrimSpace(algorithm)) {
-	case "", "sha256":
+	case "", algorithmSHA256:
 		h = hmac.New(sha256.New, secret)
 	default:
 		return fmt.Errorf("unsupported signature algorithm %q", algorithm)

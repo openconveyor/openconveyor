@@ -40,11 +40,15 @@ type ConfigProjection struct {
 	Mount  *corev1.VolumeMount
 }
 
-// ConfigConfigMapName returns the name of the owned ConfigMap that holds
+// configSuffix distinguishes the agent-config ConfigMap from the Task's
+// main resource name and the prompt ConfigMap.
+const configSuffix = "-config"
+
+// AgentConfigMapName returns the name of the owned ConfigMap that holds
 // the Task's agent config JSON. Separate from the Task's main resource
 // name and from the prompt ConfigMap.
-func ConfigConfigMapName(taskName string) string {
-	return taskName + "-config"
+func AgentConfigMapName(taskName string) string {
+	return taskName + configSuffix
 }
 
 // BuildConfigProjection turns Task.spec.agent.config into container env
@@ -122,7 +126,7 @@ func BuildConfigProjection(
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: ConfigConfigMapName(taskName),
+						Name: AgentConfigMapName(taskName),
 					},
 				},
 			},
@@ -136,11 +140,11 @@ func BuildConfigProjection(
 	}, nil
 }
 
-// BuildConfigConfigMap materialises the owned ConfigMap that carries the
+// BuildAgentConfigMap materialises the owned ConfigMap that carries the
 // config JSON for agents with a declared config mount. Returns nil when
 // there is nothing to mount — the reconciler should then make sure no
 // such ConfigMap lingers from a prior state.
-func BuildConfigConfigMap(
+func BuildAgentConfigMap(
 	taskName, namespace string,
 	config *runtime.RawExtension,
 	inputs conveyorv1alpha1.AgentInputs,
@@ -149,7 +153,7 @@ func BuildConfigConfigMap(
 		return nil
 	}
 	return &corev1.ConfigMap{
-		ObjectMeta: ownedMeta(ConfigConfigMapName(taskName), namespace, taskName),
+		ObjectMeta: ownedMeta(AgentConfigMapName(taskName), namespace, taskName),
 		Data: map[string]string{
 			ConfigKey: string(config.Raw),
 		},
