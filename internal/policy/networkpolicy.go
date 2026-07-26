@@ -80,11 +80,7 @@ func BuildNetworkPolicy(
 	}
 
 	return &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      taskName,
-			Namespace: namespace,
-			Labels:    OwnershipLabels(taskName),
-		},
+		ObjectMeta: ownedMeta(taskName, namespace, taskName),
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: PodSelectorLabels(taskName)},
 			PolicyTypes: []networkingv1.PolicyType{

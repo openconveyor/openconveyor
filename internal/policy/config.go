@@ -15,7 +15,6 @@ import (
 	"sort"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
@@ -30,6 +29,16 @@ const ConfigVolumeName = "config"
 
 // envNameRe matches valid POSIX environment variable names.
 var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// ConfigProjection is how spec.agent.config reaches the container:
+// scalar fields as env vars, plus — when the AgentClass declares a
+// config mount — a volume/mount pair carrying the full JSON. Zero value
+// means the Task has no config.
+type ConfigProjection struct {
+	Env    []corev1.EnvVar
+	Volume *corev1.Volume
+	Mount  *corev1.VolumeMount
+}
 
 // ConfigConfigMapName returns the name of the owned ConfigMap that holds
 // the Task's agent config JSON. Separate from the Task's main resource
@@ -62,14 +71,14 @@ func BuildConfigProjection(
 	taskName string,
 	config *runtime.RawExtension,
 	inputs conveyorv1alpha1.AgentInputs,
-) ([]corev1.EnvVar, *corev1.Volume, *corev1.VolumeMount, error) {
+) (ConfigProjection, error) {
 	if config == nil || len(config.Raw) == 0 {
-		return nil, nil, nil, nil
+		return ConfigProjection{}, nil
 	}
 
 	fields, err := decodeConfigObject(config.Raw)
 	if err != nil {
-		return nil, nil, nil, &PermanentError{Err: fmt.Errorf("spec.agent.config: %w", err)}
+		return ConfigProjection{}, &PermanentError{Err: fmt.Errorf("spec.agent.config: %w", err)}
 	}
 
 	hasMount := inputs.Config != nil && inputs.Config.Mount != ""
@@ -88,7 +97,7 @@ func BuildConfigProjection(
 			if hasMount || hasWholeEnv {
 				continue // reachable via the full JSON
 			}
-			return nil, nil, nil, &PermanentError{Err: fmt.Errorf(
+			return ConfigProjection{}, &PermanentError{Err: fmt.Errorf(
 				"spec.agent.config.%s cannot be projected as an env var and the AgentClass declares no config mount/env", k)}
 		}
 		envs = append(envs, corev1.EnvVar{Name: k, Value: val})
@@ -96,33 +105,35 @@ func BuildConfigProjection(
 
 	if hasWholeEnv {
 		if !envNameRe.MatchString(inputs.Config.Env) {
-			return nil, nil, nil, &PermanentError{Err: fmt.Errorf(
+			return ConfigProjection{}, &PermanentError{Err: fmt.Errorf(
 				"agentclass inputs.config.env %q is not a valid env var name", inputs.Config.Env)}
 		}
 		envs = append(envs, corev1.EnvVar{Name: inputs.Config.Env, Value: string(config.Raw)})
 	}
 
 	if !hasMount {
-		return envs, nil, nil, nil
+		return ConfigProjection{Env: envs}, nil
 	}
 
-	vol := &corev1.Volume{
-		Name: ConfigVolumeName,
-		VolumeSource: corev1.VolumeSource{
-			ConfigMap: &corev1.ConfigMapVolumeSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: ConfigConfigMapName(taskName),
+	return ConfigProjection{
+		Env: envs,
+		Volume: &corev1.Volume{
+			Name: ConfigVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: ConfigConfigMapName(taskName),
+					},
 				},
 			},
 		},
-	}
-	mount := &corev1.VolumeMount{
-		Name:      ConfigVolumeName,
-		MountPath: inputs.Config.Mount,
-		SubPath:   ConfigKey,
-		ReadOnly:  true,
-	}
-	return envs, vol, mount, nil
+		Mount: &corev1.VolumeMount{
+			Name:      ConfigVolumeName,
+			MountPath: inputs.Config.Mount,
+			SubPath:   ConfigKey,
+			ReadOnly:  true,
+		},
+	}, nil
 }
 
 // BuildConfigConfigMap materialises the owned ConfigMap that carries the
@@ -138,11 +149,7 @@ func BuildConfigConfigMap(
 		return nil
 	}
 	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      ConfigConfigMapName(taskName),
-			Namespace: namespace,
-			Labels:    OwnershipLabels(taskName),
-		},
+		ObjectMeta: ownedMeta(ConfigConfigMapName(taskName), namespace, taskName),
 		Data: map[string]string{
 			ConfigKey: string(config.Raw),
 		},

@@ -80,11 +80,11 @@ func buildJob(
 	automount := policy.NeedsServiceAccountToken(task.Spec.Permissions.RBAC)
 
 	secretVolumes, secretMounts := policy.BuildSecretVolumes(effectiveSecrets)
-	promptVol, promptMount, err := policy.BuildPromptProjection(task.Name, task.Spec.Prompt, agent.Spec.Inputs)
+	prompt, err := policy.BuildPromptProjection(task.Name, task.Spec.Prompt, agent.Spec.Inputs)
 	if err != nil {
 		return nil, err
 	}
-	configEnv, configVol, configMount, err := policy.BuildConfigProjection(task.Name, task.Spec.Agent.Config, agent.Spec.Inputs)
+	config, err := policy.BuildConfigProjection(task.Name, task.Spec.Agent.Config, agent.Spec.Inputs)
 	if err != nil {
 		return nil, err
 	}
@@ -97,21 +97,21 @@ func buildJob(
 		},
 	})
 	volumes = append(volumes, secretVolumes...)
-	if promptVol != nil {
-		volumes = append(volumes, *promptVol)
+	if prompt.Volume != nil {
+		volumes = append(volumes, *prompt.Volume)
 	}
-	if configVol != nil {
-		volumes = append(volumes, *configVol)
+	if config.Volume != nil {
+		volumes = append(volumes, *config.Volume)
 	}
 
 	mounts := make([]corev1.VolumeMount, 0, 2+len(secretMounts))
 	mounts = append(mounts, corev1.VolumeMount{Name: scratchVolumeName, MountPath: "/tmp"})
 	mounts = append(mounts, secretMounts...)
-	if promptMount != nil {
-		mounts = append(mounts, *promptMount)
+	if prompt.Mount != nil {
+		mounts = append(mounts, *prompt.Mount)
 	}
-	if configMount != nil {
-		mounts = append(mounts, *configMount)
+	if config.Mount != nil {
+		mounts = append(mounts, *config.Mount)
 	}
 
 	resourceReqs, err := buildResourceRequirements(task.Spec.Resources)
@@ -125,7 +125,7 @@ func buildJob(
 		ImagePullPolicy: corev1.PullPolicy(defaultString(agent.Spec.ImagePullPolicy, string(corev1.PullIfNotPresent))),
 		Command:         agent.Spec.Command,
 		Args:            agent.Spec.Args,
-		Env:             configEnv,
+		Env:             config.Env,
 		Resources:       resourceReqs,
 		SecurityContext: &corev1.SecurityContext{
 			RunAsNonRoot:             &runAsNonRoot,

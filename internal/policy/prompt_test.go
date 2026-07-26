@@ -14,12 +14,12 @@ import (
 
 func TestBuildPromptProjection_NilWhenNoPromptInput(t *testing.T) {
 	inputs := conveyorv1alpha1.AgentInputs{} // no Prompt declared
-	vol, mount, err := BuildPromptProjection("task-1", conveyorv1alpha1.PromptSource{Inline: "hi"}, inputs)
+	proj, err := BuildPromptProjection("task-1", conveyorv1alpha1.PromptSource{Inline: "hi"}, inputs)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if vol != nil || mount != nil {
-		t.Errorf("expected nil vol/mount when agent has no prompt input, got %+v / %+v", vol, mount)
+	if proj.Volume != nil || proj.Mount != nil {
+		t.Errorf("expected zero projection when agent has no prompt input, got %+v", proj)
 	}
 }
 
@@ -27,12 +27,12 @@ func TestBuildPromptProjection_NilWhenMountEmpty(t *testing.T) {
 	inputs := conveyorv1alpha1.AgentInputs{
 		Prompt: &conveyorv1alpha1.AgentInputMount{Mount: ""},
 	}
-	vol, mount, err := BuildPromptProjection("task-1", conveyorv1alpha1.PromptSource{Inline: "hi"}, inputs)
+	proj, err := BuildPromptProjection("task-1", conveyorv1alpha1.PromptSource{Inline: "hi"}, inputs)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if vol != nil || mount != nil {
-		t.Errorf("expected nil vol/mount when mount path is empty, got %+v / %+v", vol, mount)
+	if proj.Volume != nil || proj.Mount != nil {
+		t.Errorf("expected zero projection when mount path is empty, got %+v", proj)
 	}
 }
 
@@ -42,13 +42,14 @@ func TestBuildPromptProjection_Inline(t *testing.T) {
 	}
 	prompt := conveyorv1alpha1.PromptSource{Inline: "do work"}
 
-	vol, mount, err := BuildPromptProjection("my-task", prompt, inputs)
+	proj, err := BuildPromptProjection("my-task", prompt, inputs)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if vol == nil || mount == nil {
+	if proj.Volume == nil || proj.Mount == nil {
 		t.Fatal("expected non-nil vol/mount for inline prompt")
 	}
+	vol, mount := proj.Volume, proj.Mount
 	if vol.Name != PromptVolumeName {
 		t.Errorf("volume name = %q, want %q", vol.Name, PromptVolumeName)
 	}
@@ -80,10 +81,11 @@ func TestBuildPromptProjection_ConfigMapRef(t *testing.T) {
 		},
 	}
 
-	vol, mount, err := BuildPromptProjection("task-2", prompt, inputs)
+	proj, err := BuildPromptProjection("task-2", prompt, inputs)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	vol, mount := proj.Volume, proj.Mount
 	if vol.ConfigMap == nil {
 		t.Fatal("expected ConfigMap volume source")
 	}
@@ -106,10 +108,11 @@ func TestBuildPromptProjection_SecretRef(t *testing.T) {
 		},
 	}
 
-	vol, mount, err := BuildPromptProjection("task-3", prompt, inputs)
+	proj, err := BuildPromptProjection("task-3", prompt, inputs)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	vol, mount := proj.Volume, proj.Mount
 	if vol.Secret == nil {
 		t.Fatal("expected Secret volume source")
 	}
@@ -127,7 +130,7 @@ func TestBuildPromptProjection_NoSourceIsError(t *testing.T) {
 	}
 	prompt := conveyorv1alpha1.PromptSource{} // nothing set
 
-	_, _, err := BuildPromptProjection("task-4", prompt, inputs)
+	_, err := BuildPromptProjection("task-4", prompt, inputs)
 	if err == nil {
 		t.Fatal("expected error when prompt has no source")
 	}

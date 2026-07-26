@@ -18,24 +18,25 @@ func rawConfig(s string) *runtime.RawExtension {
 }
 
 func TestBuildConfigProjection_NilConfig(t *testing.T) {
-	envs, vol, mount, err := BuildConfigProjection("task-1", nil, conveyorv1alpha1.AgentInputs{})
+	proj, err := BuildConfigProjection("task-1", nil, conveyorv1alpha1.AgentInputs{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if envs != nil || vol != nil || mount != nil {
-		t.Errorf("expected all nil for nil config, got %+v / %+v / %+v", envs, vol, mount)
+	if proj.Env != nil || proj.Volume != nil || proj.Mount != nil {
+		t.Errorf("expected zero projection for nil config, got %+v", proj)
 	}
 }
 
 func TestBuildConfigProjection_ScalarsBecomeSortedEnv(t *testing.T) {
 	cfg := rawConfig(`{"TARGET_REPO":"https://github.com/o/r.git","COUNT":3,"DRY_RUN":true}`)
-	envs, vol, mount, err := BuildConfigProjection("task-1", cfg, conveyorv1alpha1.AgentInputs{})
+	proj, err := BuildConfigProjection("task-1", cfg, conveyorv1alpha1.AgentInputs{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if vol != nil || mount != nil {
-		t.Errorf("expected no volume without a declared mount, got %+v / %+v", vol, mount)
+	if proj.Volume != nil || proj.Mount != nil {
+		t.Errorf("expected no volume without a declared mount, got %+v / %+v", proj.Volume, proj.Mount)
 	}
+	envs := proj.Env
 	want := []struct{ name, value string }{
 		{"COUNT", "3"},
 		{"DRY_RUN", "true"},
@@ -52,7 +53,7 @@ func TestBuildConfigProjection_ScalarsBecomeSortedEnv(t *testing.T) {
 }
 
 func TestBuildConfigProjection_MalformedJSONIsPermanent(t *testing.T) {
-	_, _, _, err := BuildConfigProjection("task-1", rawConfig(`["not","an","object"]`), conveyorv1alpha1.AgentInputs{})
+	_, err := BuildConfigProjection("task-1", rawConfig(`["not","an","object"]`), conveyorv1alpha1.AgentInputs{})
 	var perm *PermanentError
 	if !errors.As(err, &perm) {
 		t.Fatalf("expected PermanentError for non-object config, got %v", err)
@@ -61,7 +62,7 @@ func TestBuildConfigProjection_MalformedJSONIsPermanent(t *testing.T) {
 
 func TestBuildConfigProjection_UnprojectableFieldWithoutMountIsPermanent(t *testing.T) {
 	cfg := rawConfig(`{"nested":{"a":1}}`)
-	_, _, _, err := BuildConfigProjection("task-1", cfg, conveyorv1alpha1.AgentInputs{})
+	_, err := BuildConfigProjection("task-1", cfg, conveyorv1alpha1.AgentInputs{})
 	var perm *PermanentError
 	if !errors.As(err, &perm) {
 		t.Fatalf("expected PermanentError for nested field with no config mount/env, got %v", err)
@@ -73,21 +74,21 @@ func TestBuildConfigProjection_UnprojectableFieldSkippedWithMount(t *testing.T) 
 	inputs := conveyorv1alpha1.AgentInputs{
 		Config: &conveyorv1alpha1.AgentInputMount{Mount: "/task/config.json"},
 	}
-	envs, vol, mount, err := BuildConfigProjection("task-1", cfg, inputs)
+	proj, err := BuildConfigProjection("task-1", cfg, inputs)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(envs) != 1 || envs[0].Name != "PLAIN" {
-		t.Errorf("expected only PLAIN env var, got %+v", envs)
+	if len(proj.Env) != 1 || proj.Env[0].Name != "PLAIN" {
+		t.Errorf("expected only PLAIN env var, got %+v", proj.Env)
 	}
-	if vol == nil || mount == nil {
+	if proj.Volume == nil || proj.Mount == nil {
 		t.Fatal("expected volume + mount for declared config mount")
 	}
-	if vol.ConfigMap == nil || vol.ConfigMap.Name != ConfigConfigMapName("task-1") {
-		t.Errorf("volume should reference the owned config ConfigMap, got %+v", vol.VolumeSource)
+	if proj.Volume.ConfigMap == nil || proj.Volume.ConfigMap.Name != ConfigConfigMapName("task-1") {
+		t.Errorf("volume should reference the owned config ConfigMap, got %+v", proj.Volume.VolumeSource)
 	}
-	if mount.MountPath != "/task/config.json" || mount.SubPath != ConfigKey || !mount.ReadOnly {
-		t.Errorf("unexpected mount: %+v", mount)
+	if proj.Mount.MountPath != "/task/config.json" || proj.Mount.SubPath != ConfigKey || !proj.Mount.ReadOnly {
+		t.Errorf("unexpected mount: %+v", proj.Mount)
 	}
 }
 
@@ -96,10 +97,11 @@ func TestBuildConfigProjection_WholeJSONEnv(t *testing.T) {
 	inputs := conveyorv1alpha1.AgentInputs{
 		Config: &conveyorv1alpha1.AgentInputMount{Env: "AGENT_CONFIG"},
 	}
-	envs, _, _, err := BuildConfigProjection("task-1", cfg, inputs)
+	proj, err := BuildConfigProjection("task-1", cfg, inputs)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	envs := proj.Env
 	if len(envs) != 2 {
 		t.Fatalf("expected scalar env + whole-JSON env, got %+v", envs)
 	}
