@@ -37,13 +37,19 @@ const maxBodyBytes = 1 << 20
 //
 // One Handler per process; routes are discovered dynamically from the
 // cluster so new ClusterTriggerClass objects take effect without a restart.
-// The Client is expected to be cache-backed (mgr.GetClient()) so reads
-// during high-volume webhook bursts stay in-process.
+// The Client is expected to be cache-backed (mgr.GetClient()) so
+// ClusterTriggerClass reads during high-volume webhook bursts stay
+// in-process. Secret reads bypass the cache (see cmd/main.go) so the
+// manager never opens a cluster-wide Secret watch; HMAC key lookups are
+// low-volume live reads.
 type Handler struct {
 	Client    client.Client
 	Namespace string // namespace where HMAC Secrets live (usually the adapter's)
 	Log       logr.Logger
 }
+
+// +kubebuilder:rbac:groups=openconveyor.ai,resources=clustertriggerclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 // ServeHTTP validates and dispatches a single webhook request.
 //

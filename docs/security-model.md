@@ -85,6 +85,22 @@ These are pod-level, independent of cluster-level Pod Security
 Standards. An agent image that refuses to start under these is
 doing something we deliberately forbid.
 
+## Controller permissions
+
+The manager's own ClusterRole is generated from `+kubebuilder:rbac`
+markers (`internal/controller/task_controller.go`,
+`internal/trigger/handler.go`). Two entries deserve explanation:
+
+- **`secrets` / `get`, cluster-wide.** Used only by the trigger
+  adapter (ADR-0006) to read the HMAC key referenced by a
+  `ClusterTriggerClass`, from the adapter's own namespace. The
+  manager's client cache is disabled for Secrets (`cmd/main.go`), so
+  the controller never opens a cluster-wide Secret watch and never
+  holds Secrets in memory beyond a single lookup. There is no `list`
+  or `watch` verb.
+- **`clustertriggerclasses` / `get;list;watch`.** Route discovery for
+  the webhook adapter; served from the informer cache.
+
 ## Threat model
 
 **In scope.** A compromised agent image, or an agent whose prompt is
