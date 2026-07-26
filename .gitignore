@@ -9,7 +9,11 @@ Dockerfile.cross
 
 # Release artifacts produced by `make build-installer`. Published to the
 # GitHub Release by .github/workflows/release.yml — never committed.
-dist/
+# The Helm chart (dist/chart/, scaffolded by the helm/v2-alpha plugin)
+# IS committed; packaged .tgz files are not.
+dist/*
+!dist/chart/
+dist/chart/*.tgz
 
 # Test binary, built with `go test -c`
 *.test

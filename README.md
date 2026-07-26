@@ -103,6 +103,22 @@ The controller lands in the `conveyor-system` namespace. Sample Tasks
 land in `conveyor-tasks`. See [`docs/security-model.md`](docs/security-model.md)
 for the four guarantees the controller enforces on every Task it spawns.
 
+### Install via Helm
+
+From v0.2.0 the chart is published as an OCI artifact alongside the
+images (also attached to each GitHub Release as a `.tgz`):
+
+```sh
+helm install conveyor oci://ghcr.io/openconveyor/charts/conveyor \
+  --version 0.2.0 \
+  --namespace conveyor-system --create-namespace
+```
+
+The chart source lives in [`dist/chart/`](dist/chart/) and is
+regenerated from the kustomize output by the kubebuilder
+`helm/v2-alpha` plugin. CRDs install with the chart by default and are
+kept on uninstall (`--set crd.keep=false` to change that).
+
 ### Building from source
 
 For contributors and forks:
@@ -237,6 +253,8 @@ We welcome issues, design critique, and PRs. Start by reading:
   is wired.
 - [`docs/plugin-authoring.md`](docs/plugin-authoring.md) — how to add
   a new AgentClass or ClusterTriggerClass config.
+- [`docs/enterprise-auth.md`](docs/enterprise-auth.md) — short-lived
+  credentials for agents (GitHub App tokens via External Secrets).
 - [`docs/adr/`](docs/adr/) — load-bearing design decisions. If your
   PR argues against one, please propose a superseding ADR.
 - [`AGENTS.md`](AGENTS.md) — kubebuilder scaffolding conventions the

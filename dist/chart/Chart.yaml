@@ -1,0 +1,16 @@
+apiVersion: v2
+name: conveyor
+description: A Helm chart to distribute conveyor
+type: application
+
+# version/appVersion are overridden at release time by
+# `helm package --version X.Y.Z --app-version vX.Y.Z` in release.yml.
+version: 0.1.0
+appVersion: "v0.1.0"
+
+keywords:
+  - kubernetes
+  - operator
+
+annotations:
+  kubebuilder.io/generated-by: kubebuilder

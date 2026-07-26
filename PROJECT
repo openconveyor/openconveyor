@@ -6,6 +6,10 @@ cliVersion: 4.13.1
 domain: openconveyor.ai
 layout:
 - go.kubebuilder.io/v4
+plugins:
+  helm.kubebuilder.io/v2-alpha:
+    manifests: dist/install.yaml
+    output: dist
 projectName: conveyor
 repo: github.com/openconveyor/openconveyor
 resources:
@@ -14,21 +18,18 @@ resources:
     namespaced: true
   controller: true
   domain: openconveyor.ai
-  group: ""
   kind: Task
   path: github.com/openconveyor/openconveyor/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
   domain: openconveyor.ai
-  group: ""
   kind: ClusterAgentClass
   path: github.com/openconveyor/openconveyor/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
   domain: openconveyor.ai
-  group: ""
   kind: ClusterTriggerClass
   path: github.com/openconveyor/openconveyor/api/v1alpha1
   version: v1alpha1

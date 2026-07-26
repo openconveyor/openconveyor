@@ -55,6 +55,12 @@ is ever exposed via env vars. The tradeoff:
 Any Secret not listed is not mounted. `ls /run/secrets` in a zero-secret
 Task is empty.
 
+Because agents read secrets once at Job start, the values can rotate
+freely underneath — which makes short-lived, externally-minted
+credentials (e.g. GitHub App installation tokens refreshed by External
+Secrets Operator) a drop-in upgrade over static PATs. See
+[`enterprise-auth.md`](enterprise-auth.md).
+
 ### 4. Hard kill
 
 `spec.resources.timeout` is required; the controller rejects any Task
