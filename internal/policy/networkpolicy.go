@@ -14,6 +14,7 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -36,6 +37,11 @@ func (e *PermanentError) Unwrap() error { return e.Err }
 type Resolver interface {
 	LookupHost(ctx context.Context, host string) ([]string, error)
 }
+
+// lookupTimeout bounds a single hostname resolution. Lookups run
+// sequentially inside a reconcile, so without a cap one hung resolver
+// stalls a controller worker for the whole reconcile deadline.
+const lookupTimeout = 5 * time.Second
 
 // DefaultResolver uses the process's default net.Resolver.
 type DefaultResolver struct{}
@@ -132,7 +138,7 @@ func resolveEgress(ctx context.Context, resolver Resolver, egress []string) ([]s
 			continue
 		}
 
-		addrs, err := resolver.LookupHost(ctx, entry)
+		addrs, err := lookupWithTimeout(ctx, resolver, entry)
 		if err != nil {
 			wrapped := fmt.Errorf("egress entry %q: lookup failed: %w", entry, err)
 			var dnsErr *net.DNSError
@@ -154,6 +160,14 @@ func resolveEgress(ctx context.Context, resolver Resolver, egress []string) ([]s
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// lookupWithTimeout resolves one host under lookupTimeout. Timeouts are
+// transient by design (no PermanentError) so callers back off and retry.
+func lookupWithTimeout(ctx context.Context, resolver Resolver, host string) ([]string, error) {
+	lctx, cancel := context.WithTimeout(ctx, lookupTimeout)
+	defer cancel()
+	return resolver.LookupHost(lctx, host)
 }
 
 func ipToCIDR(ip net.IP) string {
