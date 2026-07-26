@@ -16,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -162,7 +163,10 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 // ensureOwned upserts one owned resource: set the controller reference,
 // create when absent, otherwise copy the reconcilable fields onto the
 // live object and update. Labels always sync; mutate (optional) copies
-// the type-specific mutable fields.
+// the type-specific mutable fields. The update is skipped when nothing
+// changed — every Job status flip triggers a full reconcile, and
+// unconditional writes would churn resourceVersions on all owned
+// resources each time.
 func ensureOwned[T client.Object](
 	ctx context.Context,
 	r *TaskReconciler,
@@ -181,10 +185,14 @@ func ensureOwned[T client.Object](
 	case err != nil:
 		return err
 	}
+	before := existing.DeepCopyObject()
 	if mutate != nil {
 		mutate(existing, desired)
 	}
 	existing.SetLabels(desired.GetLabels())
+	if apiequality.Semantic.DeepEqual(before, existing) {
+		return nil
+	}
 	return r.Update(ctx, existing)
 }
 

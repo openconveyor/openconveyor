@@ -336,6 +336,33 @@ var _ = Describe("Task Controller", func() {
 			Expect(rb.RoleRef.Name).To(Equal(taskName))
 		})
 
+		It("does not rewrite unchanged owned resources on a second reconcile", func() {
+			By("recording resourceVersions after the first reconcile")
+			versions := func() map[string]string {
+				var sa corev1.ServiceAccount
+				Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
+				var role rbacv1.Role
+				Expect(k8sClient.Get(ctx, taskKey, &role)).To(Succeed())
+				var rb rbacv1.RoleBinding
+				Expect(k8sClient.Get(ctx, taskKey, &rb)).To(Succeed())
+				var np networkingv1.NetworkPolicy
+				Expect(k8sClient.Get(ctx, taskKey, &np)).To(Succeed())
+				return map[string]string{
+					"serviceaccount": sa.ResourceVersion,
+					"role":           role.ResourceVersion,
+					"rolebinding":    rb.ResourceVersion,
+					"networkpolicy":  np.ResourceVersion,
+				}
+			}
+			before := versions()
+
+			By("reconciling again with no spec change")
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(versions()).To(Equal(before), "no-op reconcile must not bump resourceVersions")
+		})
+
 		It("restores Role rules and RoleBinding subjects mutated out-of-band", func() {
 			By("widening the Role and repointing the RoleBinding out-of-band")
 			var role rbacv1.Role
