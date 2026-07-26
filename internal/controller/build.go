@@ -83,9 +83,10 @@ func buildJob(
 	if err != nil {
 		return nil, err
 	}
-	// TODO: AgentRef.Config and AgentInputs.Config are declared in the CRD
-	// but not projected yet. Planned for post-v0.1.0 alongside multi-agent
-	// support (Gemini, Codex, etc.).
+	configEnv, configVol, configMount, err := policy.BuildConfigProjection(task.Name, task.Spec.Agent.Config, agent.Spec.Inputs)
+	if err != nil {
+		return nil, err
+	}
 
 	volumes := make([]corev1.Volume, 0, 2+len(secretVolumes))
 	volumes = append(volumes, corev1.Volume{
@@ -98,12 +99,18 @@ func buildJob(
 	if promptVol != nil {
 		volumes = append(volumes, *promptVol)
 	}
+	if configVol != nil {
+		volumes = append(volumes, *configVol)
+	}
 
 	mounts := make([]corev1.VolumeMount, 0, 2+len(secretMounts))
 	mounts = append(mounts, corev1.VolumeMount{Name: scratchVolumeName, MountPath: "/tmp"})
 	mounts = append(mounts, secretMounts...)
 	if promptMount != nil {
 		mounts = append(mounts, *promptMount)
+	}
+	if configMount != nil {
+		mounts = append(mounts, *configMount)
 	}
 
 	container := corev1.Container{
@@ -112,6 +119,7 @@ func buildJob(
 		ImagePullPolicy: corev1.PullPolicy(defaultString(agent.Spec.ImagePullPolicy, string(corev1.PullIfNotPresent))),
 		Command:         agent.Spec.Command,
 		Args:            agent.Spec.Args,
+		Env:             configEnv,
 		Resources:       buildResourceRequirements(task.Spec.Resources),
 		SecurityContext: &corev1.SecurityContext{
 			RunAsNonRoot:             &runAsNonRoot,

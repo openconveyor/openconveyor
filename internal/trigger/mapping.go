@@ -8,11 +8,14 @@ you may not use this file except in compliance with the License.
 package trigger
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/tidwall/gjson"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 )
@@ -41,7 +44,9 @@ func ApplyFilters(body []byte, filters []conveyorv1alpha1.WebhookFilter) bool {
 func BuildTask(tmpl conveyorv1alpha1.TaskTemplate, body []byte) (*conveyorv1alpha1.Task, error) {
 	task := &conveyorv1alpha1.Task{
 		Spec: conveyorv1alpha1.TaskSpec{
-			Agent:       tmpl.Agent,
+			// DeepCopy: Agent.Config is a pointer, and config mappings
+			// mutate it — the shared template must stay untouched.
+			Agent:       *tmpl.Agent.DeepCopy(),
 			Permissions: *tmpl.Permissions.DeepCopy(),
 			Resources:   tmpl.Resources,
 		},
@@ -95,6 +100,7 @@ func resolveMapping(body []byte, m conveyorv1alpha1.FieldMapping) string {
 //	name                → metadata.name (clears generateName)
 //	labels.<key>        → metadata.labels[key]
 //	annotations.<key>   → metadata.annotations[key]
+//	config.<key>        → Task.spec.agent.config[key] (projected as $<key>)
 func applyMapping(task *conveyorv1alpha1.Task, to, value string) error {
 	switch {
 	case to == "prompt":
@@ -106,9 +112,35 @@ func applyMapping(task *conveyorv1alpha1.Task, to, value string) error {
 		setMetaString(&task.ObjectMeta, "labels", strings.TrimPrefix(to, "labels."), value)
 	case strings.HasPrefix(to, "annotations."):
 		setMetaString(&task.ObjectMeta, "annotations", strings.TrimPrefix(to, "annotations."), value)
+	case strings.HasPrefix(to, "config."):
+		return setConfigKey(&task.Spec.Agent, strings.TrimPrefix(to, "config."), value)
 	default:
 		return fmt.Errorf("unknown mapping target %q", to)
 	}
+	return nil
+}
+
+// setConfigKey merges a single string value into spec.agent.config,
+// preserving any config already present on the template. Mapped values
+// override template values on key collision.
+func setConfigKey(agent *conveyorv1alpha1.AgentRef, key, value string) error {
+	if key == "" {
+		return fmt.Errorf("config mapping needs a key, e.g. \"config.TARGET_REPO\"")
+	}
+	fields := map[string]any{}
+	if agent.Config != nil && len(agent.Config.Raw) > 0 {
+		dec := json.NewDecoder(bytes.NewReader(agent.Config.Raw))
+		dec.UseNumber() // keep template numbers as written across the re-marshal
+		if err := dec.Decode(&fields); err != nil {
+			return fmt.Errorf("template agent.config is not a JSON object: %w", err)
+		}
+	}
+	fields[key] = value
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	agent.Config = &runtime.RawExtension{Raw: raw}
 	return nil
 }
 

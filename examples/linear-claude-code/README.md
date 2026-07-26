@@ -68,8 +68,13 @@ ticket described) or `Failed` (logs in `kubectl logs`).
   `data.state.name` filter is what narrows dispatch to the workflow
   transition. Without it you will get a Task every time someone
   tweaks the ticket.
-- The ticket description should include the target repository URL;
-  the implementer agent reads `$TARGET_REPO` from the environment and
-  will skip the clone/PR step if the prompt does not declare one.
-  A follow-up could add a `data.description` → regex extraction, but
-  the example keeps the mapping straightforward.
+- Linear payloads carry no repository, so the implementer's
+  `$TARGET_REPO` cannot be mapped from the event. Point the trigger
+  at a fixed repo by setting it statically on the template:
+  ```yaml
+  agent:
+    ref: claude-code-implementer
+    config:
+      TARGET_REPO: https://github.com/your-org/your-repo.git
+  ```
+  Without it the agent runs prompt-only and skips the clone/PR step.

@@ -81,8 +81,10 @@ on your phone between steps.
   add pagination to the /users endpoint."
 - **Set `TARGET_REPO` and `TARGET_BRANCH`.** The trigger template
   in `examples/github-issues-claude-code/trigger.yaml` maps
-  `repository.full_name` into an annotation. The agent uses this
-  to clone the right repo.
+  `repository.clone_url` to `config.TARGET_REPO` and
+  `repository.default_branch` to `config.TARGET_BRANCH`; the
+  controller projects them into the agent container as env vars,
+  which is how the agent clones the right repo.
 - **Check logs if the PR doesn't appear.** Find the Task name with
   `kubectl -n conveyor-tasks get tasks` and tail the Job logs:
   ```sh

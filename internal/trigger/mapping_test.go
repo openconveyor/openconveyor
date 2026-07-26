@@ -8,10 +8,12 @@ you may not use this file except in compliance with the License.
 package trigger
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 )
@@ -160,6 +162,62 @@ func TestBuildTask_NoPromptIsError(t *testing.T) {
 	_, err := BuildTask(tmpl, []byte(`{}`))
 	if err == nil {
 		t.Fatal("expected error for missing prompt, got nil")
+	}
+}
+
+func TestBuildTask_ConfigMapping(t *testing.T) {
+	tmpl := conveyorv1alpha1.TaskTemplate{
+		Agent: conveyorv1alpha1.AgentRef{
+			Ref:    "claude-code-implementer",
+			Config: &runtime.RawExtension{Raw: []byte(`{"TARGET_BRANCH":"main","KEEP":"tmpl"}`)},
+		},
+		Resources: conveyorv1alpha1.TaskResources{Timeout: metav1.Duration{Duration: time.Minute}},
+		Mappings: []conveyorv1alpha1.FieldMapping{
+			{From: "issue.title", To: "prompt"},
+			{From: "repository.clone_url", To: "config.TARGET_REPO"},
+			{From: "repository.default_branch", To: "config.TARGET_BRANCH"},
+		},
+	}
+	body := []byte(`{"issue":{"title":"do work"},"repository":{"clone_url":"https://github.com/o/r.git","default_branch":"develop"}}`)
+
+	task, err := BuildTask(tmpl, body)
+	if err != nil {
+		t.Fatalf("BuildTask: %v", err)
+	}
+
+	var cfg map[string]string
+	if err := json.Unmarshal(task.Spec.Agent.Config.Raw, &cfg); err != nil {
+		t.Fatalf("unmarshal task config: %v", err)
+	}
+	want := map[string]string{
+		"TARGET_REPO":   "https://github.com/o/r.git",
+		"TARGET_BRANCH": "develop", // mapping overrides the template value
+		"KEEP":          "tmpl",    // untouched template value survives
+	}
+	for k, v := range want {
+		if cfg[k] != v {
+			t.Errorf("config[%s] = %q, want %q", k, cfg[k], v)
+		}
+	}
+
+	// The shared template's config must not be mutated by the merge.
+	if string(tmpl.Agent.Config.Raw) != `{"TARGET_BRANCH":"main","KEEP":"tmpl"}` {
+		t.Errorf("template config mutated: %s", tmpl.Agent.Config.Raw)
+	}
+}
+
+func TestBuildTask_ConfigMappingEmptyKey(t *testing.T) {
+	tmpl := conveyorv1alpha1.TaskTemplate{
+		Agent:     conveyorv1alpha1.AgentRef{Ref: "x"},
+		Resources: conveyorv1alpha1.TaskResources{Timeout: metav1.Duration{Duration: time.Minute}},
+		Mappings: []conveyorv1alpha1.FieldMapping{
+			{From: "issue.title", To: "prompt"},
+			{From: "foo", To: "config.", Default: "v"},
+		},
+	}
+	_, err := BuildTask(tmpl, []byte(`{"issue":{"title":"t"},"foo":"bar"}`))
+	if err == nil {
+		t.Fatal("expected error for config mapping with empty key")
 	}
 }
 

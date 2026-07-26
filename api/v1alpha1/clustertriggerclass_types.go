@@ -59,6 +59,9 @@ type FieldMapping struct {
 	//   "labels.<key>"        — set a label on the Task
 	//   "annotations.<key>"   — set an annotation on the Task
 	//   "name"                — override the generated Task name
+	//   "config.<key>"        — set Task.spec.agent.config.<key>, which the
+	//                           controller projects into the agent container
+	//                           as the env var $<key>
 	// +required
 	To string `json:"to"`
 

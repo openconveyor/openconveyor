@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`docs/enterprise-auth.md`** — short-lived agent credentials:
   GitHub App installation tokens minted by the External Secrets
   Operator `GithubAccessToken` generator, replacing static PATs.
+- **Config projection** — `Task.spec.agent.config` now reaches the
+  agent container: top-level scalar fields become env vars named
+  after the field, and the full JSON is mounted/delivered when the
+  AgentClass declares `spec.inputs.config` (`mount` and/or `env`).
+  Closes the v0.1.0 known limitation. Trigger templates gained a
+  `config.<KEY>` mapping target, and the GitHub-issues and
+  cronjob-reporter examples now use it, so `$TARGET_REPO` /
+  `$REPORT_ISSUE_URL` actually reach the reference agents.
 
 ## [0.1.0] — 2026-04-26
 

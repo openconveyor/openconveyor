@@ -57,6 +57,8 @@ const (
 	StepNetworkPolicy = "network_policy"
 	// StepPromptConfigMap covers inline-prompt ConfigMap ensure.
 	StepPromptConfigMap = "prompt_configmap"
+	// StepConfigConfigMap covers agent-config ConfigMap ensure.
+	StepConfigConfigMap = "config_configmap"
 	// StepJob covers Job ensure.
 	StepJob = "job"
 	// StepStatus covers Status subresource update.

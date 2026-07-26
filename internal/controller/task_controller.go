@@ -152,9 +152,21 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, fmt.Errorf("ensure prompt configmap: %w", err)
 	}
 
+	if err := r.ensureConfigConfigMap(ctx, &task, &agent); err != nil {
+		metrics.ObserveReconcileError(metrics.StepConfigConfigMap)
+		return ctrl.Result{}, fmt.Errorf("ensure config configmap: %w", err)
+	}
+
 	job, err := r.ensureJob(ctx, &task, &agent, effectiveSecrets)
 	if err != nil {
 		metrics.ObserveReconcileError(metrics.StepJob)
+		// Config that can never be projected (malformed JSON, field with no
+		// delivery path) is a spec problem — fail the Task instead of
+		// requeueing forever.
+		var perm *policy.PermanentError
+		if errors.As(err, &perm) {
+			return ctrl.Result{}, r.markInvalid(ctx, &task, reasonInvalidSpec, err.Error())
+		}
 		return ctrl.Result{}, fmt.Errorf("ensure job: %w", err)
 	}
 
@@ -335,6 +347,42 @@ func (r *TaskReconciler) ensurePromptConfigMap(ctx context.Context, task *convey
 	}
 
 	desired := policy.BuildInlinePromptConfigMap(task.Name, task.Namespace, task.Spec.Prompt)
+	if desired == nil {
+		return r.deleteIfExists(ctx, key, &corev1.ConfigMap{})
+	}
+
+	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
+		return err
+	}
+
+	var existing corev1.ConfigMap
+	err := r.Get(ctx, key, &existing)
+	switch {
+	case apierrors.IsNotFound(err):
+		return r.Create(ctx, desired)
+	case err != nil:
+		return err
+	}
+	existing.Data = desired.Data
+	existing.Labels = desired.Labels
+	return r.Update(ctx, &existing)
+}
+
+// ensureConfigConfigMap owns the ConfigMap that carries spec.agent.config
+// for agents that declare a config mount. Upserted when needed, deleted
+// when the Task has no config (or the agent no longer mounts it) so stale
+// content does not linger.
+func (r *TaskReconciler) ensureConfigConfigMap(
+	ctx context.Context,
+	task *conveyorv1alpha1.Task,
+	agent *conveyorv1alpha1.ClusterAgentClass,
+) error {
+	key := types.NamespacedName{
+		Name:      policy.ConfigConfigMapName(task.Name),
+		Namespace: task.Namespace,
+	}
+
+	desired := policy.BuildConfigConfigMap(task.Name, task.Namespace, task.Spec.Agent.Config, agent.Spec.Inputs)
 	if desired == nil {
 		return r.deleteIfExists(ctx, key, &corev1.ConfigMap{})
 	}
