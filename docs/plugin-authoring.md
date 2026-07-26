@@ -25,6 +25,10 @@ spec:
   image: ghcr.io/openconveyor/agent-claude:latest
   inputs:
     prompt: { mount: /task/prompt }
+    # Optional: also deliver the full Task.spec.agent.config JSON as a
+    # file or a single env var. Scalar config fields become env vars
+    # either way — see the contract below.
+    config: { mount: /task/config.json }
   requires:
     egress: [api.anthropic.com]
 ```
@@ -33,14 +37,22 @@ spec:
 
 1. **Entrypoint reads the prompt** from the path in `spec.inputs.prompt.mount`
    (or the env var in `spec.inputs.prompt.env`).
-2. **Exit codes are meaningful.** Zero = success, non-zero = failure.
+2. **Config arrives as env vars.** Top-level scalar fields of
+   `Task.spec.agent.config` are projected into the container as env
+   vars named after the field (`config: {TARGET_REPO: …}` →
+   `$TARGET_REPO`). If the AgentClass declares `spec.inputs.config`,
+   the full JSON is additionally mounted at `.mount` and/or delivered
+   in the `.env` env var — that is the only way nested fields reach
+   the agent. Config is for non-secret data; secrets go through
+   `permissions.secrets` and arrive as files.
+3. **Exit codes are meaningful.** Zero = success, non-zero = failure.
    OpenConveyor surfaces Job conditions to `Task.status.phase`.
-3. **No daemons.** This is a one-shot Job, not a server. The image's
+4. **No daemons.** This is a one-shot Job, not a server. The image's
    process exits.
-4. **No writes outside `/tmp`.** `readOnlyRootFilesystem: true` is
+5. **No writes outside `/tmp`.** `readOnlyRootFilesystem: true` is
    enforced. Use `/tmp` (provided as an emptyDir) or declare a secret
    volume as your writable scratch.
-5. **Do not expect a ServiceAccount token** unless the Task declared
+6. **Do not expect a ServiceAccount token** unless the Task declared
    `permissions.rbac`. Agent images should not assume they can call
    the k8s API.
 

@@ -40,6 +40,14 @@ spec:
       - from: issue.body
         to: prompt
         default: "See issue — no body supplied"
+      # config.* values are projected into the agent container as env vars.
+      # $TARGET_REPO / $TARGET_BRANCH are what make the implementer clone
+      # the repo and open a PR — without them the agent runs prompt-only.
+      - from: repository.clone_url
+        to: config.TARGET_REPO
+      - from: repository.default_branch
+        to: config.TARGET_BRANCH
+        default: main
       - from: repository.full_name
         to: annotations.openconveyor.ai/repo
       - from: issue.number

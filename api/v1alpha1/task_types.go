@@ -28,7 +28,12 @@ type AgentRef struct {
 	// +required
 	Ref string `json:"ref"`
 
-	// config is passed to the agent image as-is (mounted as JSON at /task/config.json).
+	// config is non-secret, agent-specific configuration as a JSON object.
+	// Top-level scalar fields are projected into the agent container as
+	// environment variables named after the field (e.g. TARGET_REPO). The
+	// full JSON is additionally delivered at the AgentClass-declared
+	// inputs.config mount path and/or env var, when set. Never put secrets
+	// here — env vars leak into /proc; use permissions.secrets instead.
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Config *runtime.RawExtension `json:"config,omitempty"`

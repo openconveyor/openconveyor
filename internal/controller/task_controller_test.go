@@ -20,6 +20,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -103,20 +104,24 @@ var _ = Describe("Task Controller", func() {
 			obj.SetNamespace(taskNamespace)
 			_ = k8sClient.Delete(ctx, obj, deleteOpts)
 		}
-		// The prompt ConfigMap has a different name — handle separately.
-		promptCM := &corev1.ConfigMap{}
-		promptCM.SetName(policy.InlinePromptConfigMapName(taskName))
-		promptCM.SetNamespace(taskNamespace)
-		_ = k8sClient.Delete(ctx, promptCM, deleteOpts)
+		// The prompt and config ConfigMaps have different names — handle separately.
+		for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.ConfigConfigMapName(taskName)} {
+			cm := &corev1.ConfigMap{}
+			cm.SetName(name)
+			cm.SetNamespace(taskNamespace)
+			_ = k8sClient.Delete(ctx, cm, deleteOpts)
+		}
 		Eventually(func() bool {
 			for _, obj := range owned {
 				if err := k8sClient.Get(ctx, taskKey, obj); !apierrors.IsNotFound(err) {
 					return false
 				}
 			}
-			cmKey := types.NamespacedName{Name: policy.InlinePromptConfigMapName(taskName), Namespace: taskNamespace}
-			if err := k8sClient.Get(ctx, cmKey, &corev1.ConfigMap{}); !apierrors.IsNotFound(err) {
-				return false
+			for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.ConfigConfigMapName(taskName)} {
+				cmKey := types.NamespacedName{Name: name, Namespace: taskNamespace}
+				if err := k8sClient.Get(ctx, cmKey, &corev1.ConfigMap{}); !apierrors.IsNotFound(err) {
+					return false
+				}
 			}
 			return true
 		}, 5*time.Second, 100*time.Millisecond).Should(BeTrue(), "owned resources must be gone before next spec")
@@ -537,6 +542,93 @@ var _ = Describe("Task Controller", func() {
 			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
 			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseFailed))
 			Expect(got.Status.Conditions[0].Reason).To(Equal(reasonEgressResolveFail))
+		})
+	})
+
+	Context("config projection", func() {
+		configTask := func(config string) *conveyorv1alpha1.Task {
+			return &conveyorv1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
+				Spec: conveyorv1alpha1.TaskSpec{
+					Agent: conveyorv1alpha1.AgentRef{
+						Ref:    agentClassName,
+						Config: &runtime.RawExtension{Raw: []byte(config)},
+					},
+					Prompt: conveyorv1alpha1.PromptSource{Inline: "do work"},
+					Resources: conveyorv1alpha1.TaskResources{
+						Timeout: metav1.Duration{Duration: 5 * time.Minute},
+					},
+				},
+			}
+		}
+
+		It("projects scalar config fields as container env vars", func() {
+			Expect(k8sClient.Create(ctx, configTask(`{"TARGET_REPO":"https://github.com/o/r.git","TARGET_BRANCH":"main"}`))).To(Succeed())
+
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			env := job.Spec.Template.Spec.Containers[0].Env
+			Expect(env).To(ContainElement(corev1.EnvVar{Name: "TARGET_REPO", Value: "https://github.com/o/r.git"}))
+			Expect(env).To(ContainElement(corev1.EnvVar{Name: "TARGET_BRANCH", Value: "main"}))
+		})
+
+		It("mounts the full config JSON when the AgentClass declares a config mount", func() {
+			const mountedClass = "config-mount-agent"
+			agent := &conveyorv1alpha1.ClusterAgentClass{
+				ObjectMeta: metav1.ObjectMeta{Name: mountedClass},
+				Spec: conveyorv1alpha1.ClusterAgentClassSpec{
+					Image:   "busybox:1.36",
+					Command: []string{"echo"},
+					Inputs: conveyorv1alpha1.AgentInputs{
+						Config: &conveyorv1alpha1.AgentInputMount{Mount: "/task/config.json"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, agent)
+			})
+
+			task := configTask(`{"TARGET_REPO":"o/r","nested":{"a":1}}`)
+			task.Spec.Agent.Ref = mountedClass
+			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("owning a ConfigMap that carries the config JSON")
+			var cm corev1.ConfigMap
+			cmKey := types.NamespacedName{Name: policy.ConfigConfigMapName(taskName), Namespace: taskNamespace}
+			Expect(k8sClient.Get(ctx, cmKey, &cm)).To(Succeed())
+			Expect(cm.Data[policy.ConfigKey]).To(MatchJSON(`{"TARGET_REPO":"o/r","nested":{"a":1}}`))
+			Expect(cm.OwnerReferences).To(HaveLen(1))
+
+			By("mounting it into the container at the declared path")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			container := job.Spec.Template.Spec.Containers[0]
+			Expect(container.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name:      policy.ConfigVolumeName,
+				MountPath: "/task/config.json",
+				SubPath:   policy.ConfigKey,
+				ReadOnly:  true,
+			}))
+			Expect(container.Env).To(ContainElement(corev1.EnvVar{Name: "TARGET_REPO", Value: "o/r"}))
+		})
+
+		It("marks the Task Failed when config cannot be projected", func() {
+			Expect(k8sClient.Create(ctx, configTask(`{"nested":{"a":1}}`))).To(Succeed())
+
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			var got conveyorv1alpha1.Task
+			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
+			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseFailed))
+			Expect(got.Status.Conditions[0].Reason).To(Equal(reasonInvalidSpec))
 		})
 	})
 

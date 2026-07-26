@@ -39,7 +39,8 @@ CronJob (Monday 09:00)
 ## Setup
 
 1. Edit `task-configmap.yaml` — set `TARGET_REPO` and `REPORT_ISSUE_URL`
-   in the prompt to match your project.
+   under `spec.agent.config` to match your project. The controller
+   projects them into the agent container as env vars.
 
 2. Apply the resources:
    ```sh
