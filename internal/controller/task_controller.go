@@ -228,7 +228,8 @@ func (r *TaskReconciler) ensureServiceAccount(ctx context.Context, task *conveyo
 	case err != nil:
 		return err
 	}
-	return nil
+	existing.Labels = desired.Labels
+	return r.Update(ctx, &existing)
 }
 
 // ensureRole materializes (or tears down) the namespaced Role for this

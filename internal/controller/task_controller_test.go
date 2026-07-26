@@ -202,6 +202,34 @@ var _ = Describe("Task Controller", func() {
 			err = k8sClient.Get(ctx, taskKey, &rb)
 			Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		})
+
+		It("repairs externally mutated ServiceAccount labels on the next reconcile", func() {
+			task := &conveyorv1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
+				Spec: conveyorv1alpha1.TaskSpec{
+					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
+					Prompt: conveyorv1alpha1.PromptSource{Inline: "say hello"},
+					Resources: conveyorv1alpha1.TaskResources{
+						Timeout: metav1.Duration{Duration: 5 * time.Minute},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("stripping the ownership labels out-of-band")
+			var sa corev1.ServiceAccount
+			Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
+			sa.Labels = nil
+			Expect(k8sClient.Update(ctx, &sa)).To(Succeed())
+
+			By("reconciling again restores them")
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
+			Expect(sa.Labels).To(HaveKeyWithValue(policy.LabelTaskName, taskName))
+		})
 	})
 
 	Context("declared permissions — Phase 2 policy generation", func() {
