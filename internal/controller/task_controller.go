@@ -18,6 +18,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -435,15 +436,13 @@ func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.
 	phase, reason, msg := derivePhase(job)
 	task.Status.Phase = phase
 
-	cond := metav1.Condition{
+	meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,
 		Status:             conditionStatusFor(phase),
 		Reason:             reason,
 		Message:            msg,
 		ObservedGeneration: task.Generation,
-		LastTransitionTime: metav1.Now(),
-	}
-	setCondition(&task.Status.Conditions, cond)
+	})
 
 	if equalStatus(before, &task.Status) {
 		return nil
@@ -507,13 +506,12 @@ func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1
 	prevPhase := task.Status.Phase
 	task.Status.Phase = conveyorv1alpha1.TaskPhaseFailed
 	task.Status.ObservedGeneration = task.Generation
-	setCondition(&task.Status.Conditions, metav1.Condition{
+	meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,
 		Status:             metav1.ConditionFalse,
 		Reason:             reason,
 		Message:            msg,
 		ObservedGeneration: task.Generation,
-		LastTransitionTime: metav1.Now(),
 	})
 	if prevPhase != conveyorv1alpha1.TaskPhaseFailed {
 		metrics.ObservePhaseTransition(string(conveyorv1alpha1.TaskPhaseFailed), reason)
@@ -530,13 +528,12 @@ func (r *TaskReconciler) markWaitingForAgentClass(ctx context.Context, task *con
 	before := task.Status.DeepCopy()
 	task.Status.Phase = conveyorv1alpha1.TaskPhasePending
 	task.Status.ObservedGeneration = task.Generation
-	setCondition(&task.Status.Conditions, metav1.Condition{
+	meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,
 		Status:             metav1.ConditionUnknown,
 		Reason:             reasonAgentClassMissing,
 		Message:            fmt.Sprintf("Waiting for ClusterAgentClass %q to be created", task.Spec.Agent.Ref),
 		ObservedGeneration: task.Generation,
-		LastTransitionTime: metav1.Now(),
 	})
 	if equalStatus(before, &task.Status) {
 		return nil
@@ -544,20 +541,9 @@ func (r *TaskReconciler) markWaitingForAgentClass(ctx context.Context, task *con
 	return r.Status().Update(ctx, task)
 }
 
-func setCondition(conds *[]metav1.Condition, new metav1.Condition) {
-	for i, c := range *conds {
-		if c.Type != new.Type {
-			continue
-		}
-		if c.Status == new.Status && c.Reason == new.Reason && c.Message == new.Message {
-			return // no-op; keep original LastTransitionTime
-		}
-		(*conds)[i] = new
-		return
-	}
-	*conds = append(*conds, new)
-}
-
+// equalStatus reports whether two statuses are semantically equal,
+// ignoring condition order and LastTransitionTime (which only moves
+// when something else changed anyway).
 func equalStatus(a, b *conveyorv1alpha1.TaskStatus) bool {
 	if a.Phase != b.Phase || a.JobName != b.JobName {
 		return false
@@ -571,9 +557,10 @@ func equalStatus(a, b *conveyorv1alpha1.TaskStatus) bool {
 	if len(a.Conditions) != len(b.Conditions) {
 		return false
 	}
-	for i := range a.Conditions {
-		ac, bc := a.Conditions[i], b.Conditions[i]
-		if ac.Type != bc.Type || ac.Status != bc.Status || ac.Reason != bc.Reason || ac.Message != bc.Message {
+	for _, ac := range a.Conditions {
+		bc := meta.FindStatusCondition(b.Conditions, ac.Type)
+		if bc == nil || ac.Status != bc.Status || ac.Reason != bc.Reason || ac.Message != bc.Message ||
+			ac.ObservedGeneration != bc.ObservedGeneration {
 			return false
 		}
 	}
