@@ -29,18 +29,6 @@ import (
 	"github.com/openconveyor/openconveyor/internal/policy"
 )
 
-type fakeResolver struct {
-	table map[string][]string
-	err   error
-}
-
-func (f fakeResolver) LookupHost(_ context.Context, host string) ([]string, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.table[host], nil
-}
-
 var _ = Describe("Task Controller", func() {
 	const (
 		agentClassName = "hello"
@@ -55,8 +43,8 @@ var _ = Describe("Task Controller", func() {
 		return &TaskReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
-			Resolver: fakeResolver{
-				table: map[string][]string{
+			Resolver: policy.StaticResolver{
+				Hosts: map[string][]string{
 					"api.example.com": {"203.0.113.10"},
 				},
 			},
@@ -543,8 +531,8 @@ var _ = Describe("Task Controller", func() {
 
 			By("reconciling with a resolver that times out")
 			broken := reconciler()
-			broken.Resolver = fakeResolver{
-				err: &net.DNSError{Err: "i/o timeout", Name: "api.example.com", IsTimeout: true, IsTemporary: true},
+			broken.Resolver = policy.StaticResolver{
+				Err: &net.DNSError{Err: "i/o timeout", Name: "api.example.com", IsTimeout: true, IsTemporary: true},
 			}
 			_, err := broken.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).To(HaveOccurred(), "transient error must be returned for backoff requeue")
@@ -566,8 +554,8 @@ var _ = Describe("Task Controller", func() {
 			Expect(k8sClient.Create(ctx, egressTask())).To(Succeed())
 
 			broken := reconciler()
-			broken.Resolver = fakeResolver{
-				err: &net.DNSError{Err: "no such host", Name: "api.example.com", IsNotFound: true},
+			broken.Resolver = policy.StaticResolver{
+				Err: &net.DNSError{Err: "no such host", Name: "api.example.com", IsNotFound: true},
 			}
 			_, err := broken.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())

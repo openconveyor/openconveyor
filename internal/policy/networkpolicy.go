@@ -43,6 +43,23 @@ func (DefaultResolver) LookupHost(ctx context.Context, host string) ([]string, e
 	return net.DefaultResolver.LookupHost(ctx, host)
 }
 
+// StaticResolver serves fixed lookup results — the injectable test
+// double for Resolver, shared by this package's tests and the
+// controller's envtest suite. Err, when set, fails every lookup.
+type StaticResolver struct {
+	Hosts map[string][]string
+	Err   error
+}
+
+var _ Resolver = StaticResolver{}
+
+func (s StaticResolver) LookupHost(_ context.Context, host string) ([]string, error) {
+	if s.Err != nil {
+		return nil, s.Err
+	}
+	return s.Hosts[host], nil
+}
+
 // DNS egress target: the stock CoreDNS label set on every mainstream
 // k8s distro, reached on the standard DNS port.
 const (

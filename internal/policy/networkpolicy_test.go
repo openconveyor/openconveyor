@@ -16,21 +16,9 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 )
 
-type stubResolver struct {
-	table map[string][]string
-	err   error
-}
-
-func (s stubResolver) LookupHost(_ context.Context, host string) ([]string, error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	return s.table[host], nil
-}
-
 func TestBuildNetworkPolicy(t *testing.T) {
-	resolver := stubResolver{
-		table: map[string][]string{
+	resolver := StaticResolver{
+		Hosts: map[string][]string{
 			"api.example.com": {"203.0.113.1", "2001:db8::1"},
 			"only-v6.test":    {"2001:db8::42"},
 		},
@@ -118,7 +106,7 @@ func TestBuildNetworkPolicy(t *testing.T) {
 }
 
 func TestBuildNetworkPolicy_InvalidCIDR(t *testing.T) {
-	_, err := BuildNetworkPolicy(context.Background(), stubResolver{}, "demo", "ns", []string{"not-a-cidr/99"})
+	_, err := BuildNetworkPolicy(context.Background(), StaticResolver{}, "demo", "ns", []string{"not-a-cidr/99"})
 	if err == nil {
 		t.Fatal("expected error on invalid CIDR")
 	}
@@ -158,7 +146,7 @@ func TestBuildNetworkPolicy_ResolverError(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resolver := stubResolver{err: tc.err}
+			resolver := StaticResolver{Err: tc.err}
 			_, err := BuildNetworkPolicy(context.Background(), resolver, "demo", "ns", []string{"api.example.com"})
 			if err == nil {
 				t.Fatal("expected error when resolver fails")
@@ -208,7 +196,7 @@ func TestBuildNetworkPolicy_LookupIsBounded(t *testing.T) {
 }
 
 func TestBuildNetworkPolicy_PodSelectorBindsToTask(t *testing.T) {
-	np, err := BuildNetworkPolicy(context.Background(), stubResolver{}, "demo-task", "ns", nil)
+	np, err := BuildNetworkPolicy(context.Background(), StaticResolver{}, "demo-task", "ns", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

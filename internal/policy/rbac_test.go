@@ -14,46 +14,71 @@ import (
 
 const demoTaskName = "demo"
 
-func TestBuildRole_NilWhenEmpty(t *testing.T) {
-	if got := BuildRole("t", "ns", nil); got != nil {
-		t.Errorf("expected nil for empty rules, got %+v", got)
-	}
-	if got := BuildRole("t", "ns", []conveyorv1alpha1.RBACRule{}); got != nil {
-		t.Errorf("expected nil for empty-slice rules, got %+v", got)
-	}
-}
-
-func TestBuildRole_CopiesRulesVerbatim(t *testing.T) {
-	rules := []conveyorv1alpha1.RBACRule{
+func TestBuildRole(t *testing.T) {
+	tests := []struct {
+		name     string
+		taskName string
+		rules    []conveyorv1alpha1.RBACRule
+		wantNil  bool
+		wantRule *rbacv1.PolicyRule // checked when wantNil is false
+	}{
 		{
-			APIGroups:     []string{""},
-			Resources:     []string{"configmaps"},
-			Verbs:         []string{"get", "list"},
-			ResourceNames: []string{"app-config"},
+			name:     "nil rules → nil role",
+			taskName: "t",
+			rules:    nil,
+			wantNil:  true,
+		},
+		{
+			name:     "empty-slice rules → nil role",
+			taskName: "t",
+			rules:    []conveyorv1alpha1.RBACRule{},
+			wantNil:  true,
+		},
+		{
+			name:     "copies rules verbatim",
+			taskName: demoTaskName,
+			rules: []conveyorv1alpha1.RBACRule{
+				{
+					APIGroups:     []string{""},
+					Resources:     []string{"configmaps"},
+					Verbs:         []string{"get", "list"},
+					ResourceNames: []string{"app-config"},
+				},
+			},
+			wantRule: &rbacv1.PolicyRule{
+				APIGroups:     []string{""},
+				Resources:     []string{"configmaps"},
+				Verbs:         []string{"get", "list"},
+				ResourceNames: []string{"app-config"},
+			},
 		},
 	}
-	role := BuildRole(demoTaskName, "ns", rules)
-	if role == nil {
-		t.Fatal("expected role, got nil")
-	}
-	if role.Name != demoTaskName || role.Namespace != "ns" {
-		t.Errorf("metadata: got %s/%s want ns/demo", role.Namespace, role.Name)
-	}
-	if len(role.Rules) != 1 {
-		t.Fatalf("rule count: got %d want 1", len(role.Rules))
-	}
-	got := role.Rules[0]
-	want := rbacv1.PolicyRule{
-		APIGroups:     []string{""},
-		Resources:     []string{"configmaps"},
-		Verbs:         []string{"get", "list"},
-		ResourceNames: []string{"app-config"},
-	}
-	if !rulesEqual(got, want) {
-		t.Errorf("rule: got %+v want %+v", got, want)
-	}
-	if role.Labels[LabelManagedBy] != ManagedByValue {
-		t.Errorf("managed-by label missing")
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			role := BuildRole(tc.taskName, "ns", tc.rules)
+			if tc.wantNil {
+				if role != nil {
+					t.Errorf("expected nil for empty rules, got %+v", role)
+				}
+				return
+			}
+			if role == nil {
+				t.Fatal("expected role, got nil")
+			}
+			if role.Name != tc.taskName || role.Namespace != "ns" {
+				t.Errorf("metadata: got %s/%s want ns/%s", role.Namespace, role.Name, tc.taskName)
+			}
+			if len(role.Rules) != 1 {
+				t.Fatalf("rule count: got %d want 1", len(role.Rules))
+			}
+			if !rulesEqual(role.Rules[0], *tc.wantRule) {
+				t.Errorf("rule: got %+v want %+v", role.Rules[0], *tc.wantRule)
+			}
+			if role.Labels[LabelManagedBy] != ManagedByValue {
+				t.Errorf("managed-by label missing")
+			}
+		})
 	}
 }
 
@@ -78,11 +103,29 @@ func TestBuildRoleBinding_SubjectPointsAtTaskSA(t *testing.T) {
 }
 
 func TestNeedsServiceAccountToken(t *testing.T) {
-	if NeedsServiceAccountToken(nil) {
-		t.Error("nil rules should not need token")
+	tests := []struct {
+		name  string
+		rules []conveyorv1alpha1.RBACRule
+		want  bool
+	}{
+		{
+			name:  "nil rules should not need token",
+			rules: nil,
+			want:  false,
+		},
+		{
+			name:  "any rule should flip token on",
+			rules: []conveyorv1alpha1.RBACRule{{Verbs: []string{"get"}}},
+			want:  true,
+		},
 	}
-	if !NeedsServiceAccountToken([]conveyorv1alpha1.RBACRule{{Verbs: []string{"get"}}}) {
-		t.Error("any rule should flip token on")
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NeedsServiceAccountToken(tc.rules); got != tc.want {
+				t.Errorf("NeedsServiceAccountToken: got %v want %v", got, tc.want)
+			}
+		})
 	}
 }
 
