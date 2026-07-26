@@ -22,17 +22,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-// PermanentError marks an egress entry problem that retrying cannot fix:
-// a malformed CIDR or a hostname that authoritatively does not exist
-// (NXDOMAIN). Anything else — resolver timeouts, SERVFAIL, network blips —
-// is left unwrapped so callers retry instead of failing the Task.
-type PermanentError struct {
-	Err error
-}
-
-func (e *PermanentError) Error() string { return e.Err.Error() }
-func (e *PermanentError) Unwrap() error { return e.Err }
-
 // Resolver abstracts DNS lookup so tests can inject fixed results.
 type Resolver interface {
 	LookupHost(ctx context.Context, host string) ([]string, error)

@@ -9,7 +9,6 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -127,8 +126,7 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		// Only unfixable egress entries (bad CIDR, NXDOMAIN) fail the Task.
 		// Transient resolver or API errors are returned so controller-runtime
 		// requeues with backoff instead of wedging the Task in Failed.
-		var perm *policy.PermanentError
-		if errors.As(err, &perm) {
+		if policy.IsPermanent(err) {
 			return ctrl.Result{}, r.markInvalid(ctx, &task, reasonEgressResolveFail, err.Error())
 		}
 		return ctrl.Result{}, fmt.Errorf("ensure network policy: %w", err)
@@ -150,8 +148,7 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		// Config that can never be projected (malformed JSON, field with no
 		// delivery path) is a spec problem — fail the Task instead of
 		// requeueing forever.
-		var perm *policy.PermanentError
-		if errors.As(err, &perm) {
+		if policy.IsPermanent(err) {
 			return ctrl.Result{}, r.markInvalid(ctx, &task, reasonInvalidSpec, err.Error())
 		}
 		return ctrl.Result{}, fmt.Errorf("ensure job: %w", err)
