@@ -335,6 +335,9 @@ var _ = Describe("Task Controller", func() {
 			} else {
 				Expect(err).NotTo(HaveOccurred())
 			}
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, agent)
+			})
 		})
 
 		It("materializes a ConfigMap with the inline body and projects it at the AgentClass mount", func() {
@@ -410,6 +413,9 @@ var _ = Describe("Task Controller", func() {
 			} else {
 				Expect(err).NotTo(HaveOccurred())
 			}
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, agent)
+			})
 		})
 
 		It("unions AgentClass requires with Task permissions into the materialized policy", func() {
