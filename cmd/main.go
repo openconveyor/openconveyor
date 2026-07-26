@@ -166,14 +166,10 @@ func buildMetricsOptions(fl flags, tlsOpts []func(*tls.Config)) metricsserver.Op
 		options.FilterProvider = filters.WithAuthenticationAndAuthorization
 	}
 
-	// If the certificate is not specified, controller-runtime will automatically
-	// generate self-signed certificates for the metrics server. While convenient for development and testing,
-	// this setup is not recommended for production.
-	//
-	// TODO(user): If you enable certManager, uncomment the following lines:
-	// - [METRICS-WITH-CERTS] at config/default/kustomization.yaml to generate and use certificates
-	// managed by cert-manager for the metrics server.
-	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
+	// If the certificate is not specified, controller-runtime generates
+	// self-signed certificates for the metrics server — fine for dev, not
+	// recommended for production. For cert-manager-issued certs, enable
+	// [METRICS-WITH-CERTS] in config/default/kustomization.yaml.
 	if len(fl.metricsCertPath) > 0 {
 		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
 			"metrics-cert-path", fl.metricsCertPath,

@@ -28,6 +28,7 @@ const (
 	reasonAgentClassMissing = "AgentClassMissing"
 	reasonInvalidSpec       = "InvalidSpec"
 	reasonPending           = "Pending"
+	reasonSuspended         = "Suspended"
 	reasonRunning           = "Running"
 	reasonCompleted         = "Completed"
 	reasonFailed            = "Failed"
@@ -94,6 +95,10 @@ func derivePhase(job *batchv1.Job) (conveyorv1alpha1.TaskPhase, string, string) 
 				return conveyorv1alpha1.TaskPhaseTimedOut, reasonTimedOut, c.Message
 			}
 			return conveyorv1alpha1.TaskPhaseFailed, reasonFailed, c.Message
+		case batchv1.JobSuspended:
+			// A suspended Job would otherwise read as Running (StartTime is
+			// set) — report Pending so consumers don't think work is active.
+			return conveyorv1alpha1.TaskPhasePending, reasonSuspended, c.Message
 		}
 	}
 	if job.Status.Active > 0 || job.Status.StartTime != nil {

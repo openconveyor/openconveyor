@@ -130,6 +130,12 @@ func TestDerivePhase(t *testing.T) {
 			wantReason: reasonTimedOut,
 		},
 		{
+			name:       "JobSuspended → Pending with Suspended reason",
+			job:        jobWithCondition(batchv1.JobSuspended, corev1.ConditionTrue, "JobSuspended"),
+			wantPhase:  conveyorv1alpha1.TaskPhasePending,
+			wantReason: reasonSuspended,
+		},
+		{
 			name:       "condition with Status=False is skipped",
 			job:        jobWithCondition(batchv1.JobFailed, corev1.ConditionFalse, "BackoffLimitExceeded"),
 			wantPhase:  conveyorv1alpha1.TaskPhasePending,
