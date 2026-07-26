@@ -187,8 +187,18 @@ func validateTask(task *conveyorv1alpha1.Task) error {
 		return fmt.Errorf("spec.agent.ref is required")
 	}
 	p := task.Spec.Prompt
-	if p.Inline == "" && p.SecretRef == nil && p.ConfigMapRef == nil {
-		return fmt.Errorf("spec.prompt requires one of inline/secretRef/configMapRef")
+	sources := 0
+	if p.Inline != "" {
+		sources++
+	}
+	if p.SecretRef != nil {
+		sources++
+	}
+	if p.ConfigMapRef != nil {
+		sources++
+	}
+	if sources != 1 {
+		return fmt.Errorf("spec.prompt requires exactly one of inline/secretRef/configMapRef")
 	}
 	if r := task.Spec.Resources; r.CPU != "" {
 		if _, err := resource.ParseQuantity(r.CPU); err != nil {

@@ -228,14 +228,25 @@ spec:
                       cpu:
                         description: cpu request/limit, e.g. "500m" or "1".
                         type: string
+                        x-kubernetes-validations:
+                        - message: must be a non-negative Kubernetes resource quantity,
+                            e.g. '500m' or '1'
+                          rule: isQuantity(self) && !quantity(self).isLessThan(quantity('0'))
                       memory:
                         description: memory request/limit, e.g. "512Mi" or "1Gi".
                         type: string
+                        x-kubernetes-validations:
+                        - message: must be a non-negative Kubernetes resource quantity,
+                            e.g. '512Mi' or '1Gi'
+                          rule: isQuantity(self) && !quantity(self).isLessThan(quantity('0'))
                       timeout:
                         description: |-
                           timeout is mandatory. The controller rejects Tasks without one.
                           Mapped to Job.spec.activeDeadlineSeconds.
                         type: string
+                        x-kubernetes-validations:
+                        - message: must be a valid duration greater than 0 (e.g. '30m')
+                          rule: duration(self) > duration('0s')
                     required:
                     - timeout
                     type: object

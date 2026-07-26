@@ -41,6 +41,7 @@ type AgentRef struct {
 
 // PromptSource provides the prompt body, either inline or by reference.
 // Exactly one of inline / secretRef / configMapRef must be set.
+// +kubebuilder:validation:XValidation:rule="[has(self.inline) && self.inline.size() > 0, has(self.secretRef), has(self.configMapRef)].filter(x, x).size() == 1",message="exactly one of inline, secretRef or configMapRef must be set"
 type PromptSource struct {
 	// inline is the prompt body as a string.
 	// +optional
@@ -92,15 +93,18 @@ type RBACRule struct {
 type TaskResources struct {
 	// cpu request/limit, e.g. "500m" or "1".
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="isQuantity(self) && !quantity(self).isLessThan(quantity('0'))",message="must be a non-negative Kubernetes resource quantity, e.g. '500m' or '1'"
 	CPU string `json:"cpu,omitempty"`
 
 	// memory request/limit, e.g. "512Mi" or "1Gi".
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="isQuantity(self) && !quantity(self).isLessThan(quantity('0'))",message="must be a non-negative Kubernetes resource quantity, e.g. '512Mi' or '1Gi'"
 	Memory string `json:"memory,omitempty"`
 
 	// timeout is mandatory. The controller rejects Tasks without one.
 	// Mapped to Job.spec.activeDeadlineSeconds.
 	// +required
+	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="must be a valid duration greater than 0 (e.g. '30m')"
 	Timeout metav1.Duration `json:"timeout"`
 }
 

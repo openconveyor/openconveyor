@@ -29,6 +29,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cronjob-reporter examples now use it, so `$TARGET_REPO` /
   `$REPORT_ISSUE_URL` actually reach the reference agents.
 
+### Changed
+
+- **Spec validation moved to admission time.** The Task and
+  ClusterTriggerClass CRDs now carry CEL `x-kubernetes-validations`
+  rules: exactly one prompt source (inline / secretRef /
+  configMapRef), `resources.timeout` parseable and greater than
+  zero, and `resources.cpu` / `resources.memory` valid non-negative
+  quantities. Invalid specs are rejected at `kubectl apply` with a
+  field-level error instead of surfacing as a `Failed` Task status
+  minutes later. The reconciler keeps equivalent checks as
+  defense-in-depth for objects stored before this change; its prompt
+  check is tightened from at-least-one to exactly-one source.
+  Requires a Kubernetes 1.29+ apiserver (CEL quantity library).
+- The controller no longer uses panicking `resource.MustParse` when
+  building Job resource requirements; malformed quantities now
+  return a permanent error that marks the Task `Failed`.
+
 ## [0.1.0] — 2026-04-26
 
 First public alpha release. Installable in one command:
