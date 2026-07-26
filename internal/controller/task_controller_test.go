@@ -562,7 +562,7 @@ var _ = Describe("Task Controller", func() {
 			Expect(got.Status.Conditions[0].Reason).To(Equal(reasonInvalidSpec))
 		})
 
-		It("marks the Task Failed when the referenced AgentClass does not exist", func() {
+		It("keeps the Task Pending with a requeue when the referenced AgentClass does not exist", func() {
 			task := &conveyorv1alpha1.Task{
 				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
 				Spec: conveyorv1alpha1.TaskSpec{
@@ -575,13 +575,55 @@ var _ = Describe("Task Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, task)).To(Succeed())
 
-			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			res, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(Equal(agentClassMissingRequeue))
 
 			var got conveyorv1alpha1.Task
 			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
-			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseFailed))
+			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhasePending))
 			Expect(got.Status.Conditions[0].Reason).To(Equal(reasonAgentClassMissing))
+			Expect(got.Status.Conditions[0].Status).To(Equal(metav1.ConditionUnknown))
+		})
+
+		It("proceeds once the missing AgentClass is created afterwards", func() {
+			const lateClass = "late-agent-class"
+			task := &conveyorv1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
+				Spec: conveyorv1alpha1.TaskSpec{
+					Agent:  conveyorv1alpha1.AgentRef{Ref: lateClass},
+					Prompt: conveyorv1alpha1.PromptSource{Inline: "hi"},
+					Resources: conveyorv1alpha1.TaskResources{
+						Timeout: metav1.Duration{Duration: time.Minute},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+
+			By("reconciling before the class exists: Task waits")
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating the class the Task was waiting for")
+			agent := &conveyorv1alpha1.ClusterAgentClass{
+				ObjectMeta: metav1.ObjectMeta{Name: lateClass},
+				Spec: conveyorv1alpha1.ClusterAgentClassSpec{
+					Image:   "busybox:1.36",
+					Command: []string{"echo"},
+					Args:    []string{"hello"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, agent)
+			})
+
+			By("reconciling again: the Task proceeds to a Job")
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
 		})
 	})
 })
