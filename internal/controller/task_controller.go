@@ -18,9 +18,6 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -37,17 +34,6 @@ import (
 )
 
 const (
-	conditionReady = "Ready"
-
-	reasonAgentClassMissing = "AgentClassMissing"
-	reasonInvalidSpec       = "InvalidSpec"
-	reasonPending           = "Pending"
-	reasonRunning           = "Running"
-	reasonCompleted         = "Completed"
-	reasonFailed            = "Failed"
-	reasonTimedOut          = "TimedOut"
-	reasonEgressResolveFail = "EgressResolveFailed"
-
 	// taskAgentRefIndex indexes Tasks by spec.agent.ref so the
 	// ClusterAgentClass watch can find the Tasks that reference it.
 	taskAgentRefIndex = ".spec.agent.ref"
@@ -178,40 +164,6 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	return ctrl.Result{}, nil
-}
-
-func validateTask(task *conveyorv1alpha1.Task) error {
-	if task.Spec.Resources.Timeout.Duration <= 0 {
-		return fmt.Errorf("spec.resources.timeout must be > 0")
-	}
-	if task.Spec.Agent.Ref == "" {
-		return fmt.Errorf("spec.agent.ref is required")
-	}
-	p := task.Spec.Prompt
-	sources := 0
-	if p.Inline != "" {
-		sources++
-	}
-	if p.SecretRef != nil {
-		sources++
-	}
-	if p.ConfigMapRef != nil {
-		sources++
-	}
-	if sources != 1 {
-		return fmt.Errorf("spec.prompt requires exactly one of inline/secretRef/configMapRef")
-	}
-	if r := task.Spec.Resources; r.CPU != "" {
-		if _, err := resource.ParseQuantity(r.CPU); err != nil {
-			return fmt.Errorf("spec.resources.cpu: %w", err)
-		}
-	}
-	if r := task.Spec.Resources; r.Memory != "" {
-		if _, err := resource.ParseQuantity(r.Memory); err != nil {
-			return fmt.Errorf("spec.resources.memory: %w", err)
-		}
-	}
-	return nil
 }
 
 func (r *TaskReconciler) ensureServiceAccount(ctx context.Context, task *conveyorv1alpha1.Task) error {
@@ -423,160 +375,6 @@ func (r *TaskReconciler) deleteIfExists(ctx context.Context, key types.Namespace
 		return err
 	}
 	return nil
-}
-
-func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.Task, job *batchv1.Job) error {
-	log := logf.FromContext(ctx)
-	before := task.Status.DeepCopy()
-
-	task.Status.JobName = job.Name
-	task.Status.StartTime = job.Status.StartTime
-	task.Status.CompletionTime = job.Status.CompletionTime
-	task.Status.ObservedGeneration = task.Generation
-
-	phase, reason, msg := derivePhase(job)
-	task.Status.Phase = phase
-
-	meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-		Type:               conditionReady,
-		Status:             conditionStatusFor(phase),
-		Reason:             reason,
-		Message:            msg,
-		ObservedGeneration: task.Generation,
-	})
-
-	if equalStatus(before, &task.Status) {
-		return nil
-	}
-
-	if before.Phase != phase {
-		log.Info("Task phase transitioned", "from", before.Phase, "to", phase, "reason", reason)
-		metrics.ObservePhaseTransition(string(phase), reason)
-		if isTerminal(phase) && task.Status.StartTime != nil && task.Status.CompletionTime != nil {
-			dur := task.Status.CompletionTime.Sub(task.Status.StartTime.Time).Seconds()
-			metrics.ObserveTaskDuration(string(phase), dur)
-		}
-	}
-
-	return r.Status().Update(ctx, task)
-}
-
-func isTerminal(phase conveyorv1alpha1.TaskPhase) bool {
-	switch phase {
-	case conveyorv1alpha1.TaskPhaseCompleted,
-		conveyorv1alpha1.TaskPhaseFailed,
-		conveyorv1alpha1.TaskPhaseTimedOut:
-		return true
-	}
-	return false
-}
-
-func derivePhase(job *batchv1.Job) (conveyorv1alpha1.TaskPhase, string, string) {
-	for _, c := range job.Status.Conditions {
-		if c.Status != corev1.ConditionTrue {
-			continue
-		}
-		switch c.Type {
-		case batchv1.JobComplete, batchv1.JobSuccessCriteriaMet:
-			return conveyorv1alpha1.TaskPhaseCompleted, reasonCompleted, c.Message
-		case batchv1.JobFailed:
-			if c.Reason == "DeadlineExceeded" {
-				return conveyorv1alpha1.TaskPhaseTimedOut, reasonTimedOut, c.Message
-			}
-			return conveyorv1alpha1.TaskPhaseFailed, reasonFailed, c.Message
-		}
-	}
-	if job.Status.Active > 0 || job.Status.StartTime != nil {
-		return conveyorv1alpha1.TaskPhaseRunning, reasonRunning, "Job is running"
-	}
-	return conveyorv1alpha1.TaskPhasePending, reasonPending, "Waiting for pod to start"
-}
-
-func conditionStatusFor(phase conveyorv1alpha1.TaskPhase) metav1.ConditionStatus {
-	switch phase {
-	case conveyorv1alpha1.TaskPhaseCompleted:
-		return metav1.ConditionTrue
-	case conveyorv1alpha1.TaskPhaseFailed, conveyorv1alpha1.TaskPhaseTimedOut:
-		return metav1.ConditionFalse
-	default:
-		return metav1.ConditionUnknown
-	}
-}
-
-func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1.Task, reason, msg string) error {
-	prevPhase := task.Status.Phase
-	task.Status.Phase = conveyorv1alpha1.TaskPhaseFailed
-	task.Status.ObservedGeneration = task.Generation
-	meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-		Type:               conditionReady,
-		Status:             metav1.ConditionFalse,
-		Reason:             reason,
-		Message:            msg,
-		ObservedGeneration: task.Generation,
-	})
-	if prevPhase != conveyorv1alpha1.TaskPhaseFailed {
-		metrics.ObservePhaseTransition(string(conveyorv1alpha1.TaskPhaseFailed), reason)
-	}
-	return r.Status().Update(ctx, task)
-}
-
-// markWaitingForAgentClass records that the Task is waiting for its
-// ClusterAgentClass to be created. Unlike markInvalid this keeps the
-// Task in Pending so it picks up where it left off once the class
-// exists. The status update is skipped when nothing changed so the
-// periodic requeue doesn't spam the API server.
-func (r *TaskReconciler) markWaitingForAgentClass(ctx context.Context, task *conveyorv1alpha1.Task) error {
-	before := task.Status.DeepCopy()
-	task.Status.Phase = conveyorv1alpha1.TaskPhasePending
-	task.Status.ObservedGeneration = task.Generation
-	meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-		Type:               conditionReady,
-		Status:             metav1.ConditionUnknown,
-		Reason:             reasonAgentClassMissing,
-		Message:            fmt.Sprintf("Waiting for ClusterAgentClass %q to be created", task.Spec.Agent.Ref),
-		ObservedGeneration: task.Generation,
-	})
-	if equalStatus(before, &task.Status) {
-		return nil
-	}
-	return r.Status().Update(ctx, task)
-}
-
-// equalStatus reports whether two statuses are semantically equal,
-// ignoring condition order and LastTransitionTime (which only moves
-// when something else changed anyway).
-func equalStatus(a, b *conveyorv1alpha1.TaskStatus) bool {
-	if a.Phase != b.Phase || a.JobName != b.JobName {
-		return false
-	}
-	if a.ObservedGeneration != b.ObservedGeneration {
-		return false
-	}
-	if !timesEqual(a.StartTime, b.StartTime) || !timesEqual(a.CompletionTime, b.CompletionTime) {
-		return false
-	}
-	if len(a.Conditions) != len(b.Conditions) {
-		return false
-	}
-	for _, ac := range a.Conditions {
-		bc := meta.FindStatusCondition(b.Conditions, ac.Type)
-		if bc == nil || ac.Status != bc.Status || ac.Reason != bc.Reason || ac.Message != bc.Message ||
-			ac.ObservedGeneration != bc.ObservedGeneration {
-			return false
-		}
-	}
-	return true
-}
-
-func timesEqual(a, b *metav1.Time) bool {
-	switch {
-	case a == nil && b == nil:
-		return true
-	case a == nil || b == nil:
-		return false
-	default:
-		return a.Equal(b)
-	}
 }
 
 // tasksForAgentClass maps a ClusterAgentClass event to the non-terminal
