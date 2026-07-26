@@ -38,22 +38,27 @@ func TestServer_StartAndShutdown(t *testing.T) {
 		errCh <- srv.Start(ctx)
 	}()
 
-	// Wait for the server to be ready.
+	// Wait for the server to be ready. Only a 200 counts: a reachable
+	// server returning non-200 must fail the test, not slip past it.
+	ready := false
+	var lastStatus int
 	var lastErr error
-	for range 20 {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
 		resp, err := http.Get("http://" + addr + "/healthz")
+		lastErr = err
 		if err == nil {
+			lastStatus = resp.StatusCode
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				lastErr = nil
+				ready = true
 				break
 			}
 		}
-		lastErr = err
 		time.Sleep(50 * time.Millisecond)
 	}
-	if lastErr != nil {
-		t.Fatalf("server did not become ready: %v", lastErr)
+	if !ready {
+		t.Fatalf("server did not become ready: lastStatus=%d lastErr=%v", lastStatus, lastErr)
 	}
 
 	// Cancel the context to trigger shutdown.
