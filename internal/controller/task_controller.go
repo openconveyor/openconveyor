@@ -66,8 +66,6 @@ type TaskReconciler struct {
 // place when the pod starts, the CNI default-allow window lets an agent
 // escape its egress allowlist for the first few hundred milliseconds.
 func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
-
 	var task conveyorv1alpha1.Task
 	if err := r.Get(ctx, req.NamespacedName, &task); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -82,7 +80,7 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	if err := validateTask(&task); err != nil {
 		metrics.ObserveReconcileError(metrics.StepValidate)
-		return ctrl.Result{}, r.markInvalid(ctx, &task, reasonInvalidSpec, err.Error())
+		return ctrl.Result{}, r.failTask(ctx, &task, reasonInvalidSpec, err)
 	}
 
 	var agent conveyorv1alpha1.ClusterAgentClass
@@ -103,43 +101,41 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	if err := r.ensureServiceAccount(ctx, &task); err != nil {
-		metrics.ObserveReconcileError(metrics.StepServiceAccount)
-		return ctrl.Result{}, fmt.Errorf("ensure service account: %w", err)
-	}
-
-	if err := r.ensureRole(ctx, &task); err != nil {
-		metrics.ObserveReconcileError(metrics.StepRole)
-		return ctrl.Result{}, fmt.Errorf("ensure role: %w", err)
-	}
-
-	if err := r.ensureRoleBinding(ctx, &task); err != nil {
-		metrics.ObserveReconcileError(metrics.StepRoleBinding)
-		return ctrl.Result{}, fmt.Errorf("ensure rolebinding: %w", err)
-	}
-
 	effectiveEgress := policy.MergeStringSets(task.Spec.Permissions.Egress, agent.Spec.Requires.Egress)
 	effectiveSecrets := policy.MergeStringSets(task.Spec.Permissions.Secrets, agent.Spec.Requires.Secrets)
 
-	if err := r.ensureNetworkPolicy(ctx, &task, effectiveEgress); err != nil {
-		metrics.ObserveReconcileError(metrics.StepNetworkPolicy)
-		// Only unfixable egress entries (bad CIDR, NXDOMAIN) fail the Task.
-		// Transient resolver or API errors are returned so controller-runtime
-		// requeues with backoff instead of wedging the Task in Failed.
-		if policy.IsPermanent(err) {
-			return ctrl.Result{}, r.markInvalid(ctx, &task, reasonEgressResolveFail, err.Error())
+	// A step with a non-empty invalidReason may surface a PermanentError
+	// (bad CIDR, NXDOMAIN) that fails the Task; every other error is
+	// wrapped and returned so controller-runtime requeues with backoff
+	// instead of wedging the Task in Failed. Order matters: the
+	// NetworkPolicy must exist before the Job (ADR-0005).
+	steps := []struct {
+		metricsStep   string
+		wrap          string
+		invalidReason string
+		run           func(context.Context) error
+	}{
+		{metrics.StepServiceAccount, "ensure service account", "",
+			func(ctx context.Context) error { return r.ensureServiceAccount(ctx, &task) }},
+		{metrics.StepRole, "ensure role", "",
+			func(ctx context.Context) error { return r.ensureRole(ctx, &task) }},
+		{metrics.StepRoleBinding, "ensure rolebinding", "",
+			func(ctx context.Context) error { return r.ensureRoleBinding(ctx, &task) }},
+		{metrics.StepNetworkPolicy, "ensure network policy", reasonEgressResolveFail,
+			func(ctx context.Context) error { return r.ensureNetworkPolicy(ctx, &task, effectiveEgress) }},
+		{metrics.StepPromptConfigMap, "ensure prompt configmap", "",
+			func(ctx context.Context) error { return r.ensurePromptConfigMap(ctx, &task) }},
+		{metrics.StepConfigConfigMap, "ensure config configmap", "",
+			func(ctx context.Context) error { return r.ensureConfigConfigMap(ctx, &task, &agent) }},
+	}
+	for _, step := range steps {
+		if err := step.run(ctx); err != nil {
+			metrics.ObserveReconcileError(step.metricsStep)
+			if step.invalidReason != "" && policy.IsPermanent(err) {
+				return ctrl.Result{}, r.failTask(ctx, &task, step.invalidReason, err)
+			}
+			return ctrl.Result{}, fmt.Errorf("%s: %w", step.wrap, err)
 		}
-		return ctrl.Result{}, fmt.Errorf("ensure network policy: %w", err)
-	}
-
-	if err := r.ensurePromptConfigMap(ctx, &task); err != nil {
-		metrics.ObserveReconcileError(metrics.StepPromptConfigMap)
-		return ctrl.Result{}, fmt.Errorf("ensure prompt configmap: %w", err)
-	}
-
-	if err := r.ensureConfigConfigMap(ctx, &task, &agent); err != nil {
-		metrics.ObserveReconcileError(metrics.StepConfigConfigMap)
-		return ctrl.Result{}, fmt.Errorf("ensure config configmap: %w", err)
 	}
 
 	job, err := r.ensureJob(ctx, &task, &agent, effectiveSecrets)
@@ -149,14 +145,13 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		// delivery path) is a spec problem — fail the Task instead of
 		// requeueing forever.
 		if policy.IsPermanent(err) {
-			return ctrl.Result{}, r.markInvalid(ctx, &task, reasonInvalidSpec, err.Error())
+			return ctrl.Result{}, r.failTask(ctx, &task, reasonInvalidSpec, err)
 		}
 		return ctrl.Result{}, fmt.Errorf("ensure job: %w", err)
 	}
 
 	if err := r.syncStatus(ctx, &task, job); err != nil {
 		metrics.ObserveReconcileError(metrics.StepStatus)
-		log.Error(err, "Failed to update Task status")
 		return ctrl.Result{}, err
 	}
 

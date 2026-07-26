@@ -9,6 +9,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -110,6 +111,16 @@ func conditionStatusFor(phase conveyorv1alpha1.TaskPhase) metav1.ConditionStatus
 	default:
 		return metav1.ConditionUnknown
 	}
+}
+
+// failTask marks the Task Failed because of cause (a spec problem
+// retrying cannot fix). When the status write itself fails, both errors
+// are joined so the original cause is never masked.
+func (r *TaskReconciler) failTask(ctx context.Context, task *conveyorv1alpha1.Task, reason string, cause error) error {
+	if err := r.markInvalid(ctx, task, reason, cause.Error()); err != nil {
+		return errors.Join(cause, err)
+	}
+	return nil
 }
 
 func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1.Task, reason, msg string) error {
