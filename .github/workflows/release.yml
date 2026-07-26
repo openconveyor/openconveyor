@@ -93,6 +93,15 @@ jobs:
           IMG: ${{ env.REGISTRY }}/${{ env.OWNER }}/conveyor:${{ github.ref_name }}
         run: make build-installer IMG="$IMG"
 
+      - name: Package & push Helm chart
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          helm package dist/chart --version "$VERSION" --app-version "$TAG" --destination dist/
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+          helm push "dist/conveyor-${VERSION}.tgz" "oci://${{ env.REGISTRY }}/${{ env.OWNER }}/charts"
+
       - name: Extract release notes from CHANGELOG
         id: notes
         env:
@@ -115,5 +124,7 @@ jobs:
         with:
           name: ${{ github.ref_name }}
           body_path: release-notes.md
-          files: dist/install.yaml
+          files: |
+            dist/install.yaml
+            dist/conveyor-*.tgz
           fail_on_unmatched_files: true
