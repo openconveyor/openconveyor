@@ -11,6 +11,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"strings"
@@ -19,6 +20,16 @@ import (
 // algorithmSHA256 is the only supported signature algorithm; the CRD
 // defaults spec.signature.algorithm to it (clustertriggerclass_types.go).
 const algorithmSHA256 = "sha256"
+
+// Sentinel verification errors. The first two are caller failures
+// (respond 401); the last two are operator configuration problems the
+// caller cannot fix (respond 500).
+var (
+	ErrMissingSignature     = errors.New("missing signature header")
+	ErrSignatureMismatch    = errors.New("signature mismatch")
+	ErrEmptySecret          = errors.New("empty signing secret")
+	ErrUnsupportedAlgorithm = errors.New("unsupported signature algorithm")
+)
 
 // VerifyHMAC compares a provided header signature against HMAC(secret, body).
 //
@@ -32,10 +43,10 @@ const algorithmSHA256 = "sha256"
 // that at the ingress.
 func VerifyHMAC(algorithm, prefix, headerValue string, secret, body []byte) error {
 	if headerValue == "" {
-		return fmt.Errorf("missing signature header")
+		return ErrMissingSignature
 	}
 	if len(secret) == 0 {
-		return fmt.Errorf("empty signing secret")
+		return ErrEmptySecret
 	}
 
 	sig := strings.TrimPrefix(strings.TrimSpace(headerValue), prefix)
@@ -45,7 +56,7 @@ func VerifyHMAC(algorithm, prefix, headerValue string, secret, body []byte) erro
 	case "", algorithmSHA256:
 		h = hmac.New(sha256.New, secret)
 	default:
-		return fmt.Errorf("unsupported signature algorithm %q", algorithm)
+		return fmt.Errorf("%w: %q", ErrUnsupportedAlgorithm, algorithm)
 	}
 
 	if _, err := h.Write(body); err != nil {
@@ -54,7 +65,7 @@ func VerifyHMAC(algorithm, prefix, headerValue string, secret, body []byte) erro
 	want := hex.EncodeToString(h.Sum(nil))
 
 	if !hmac.Equal([]byte(strings.ToLower(sig)), []byte(want)) {
-		return fmt.Errorf("signature mismatch")
+		return ErrSignatureMismatch
 	}
 	return nil
 }

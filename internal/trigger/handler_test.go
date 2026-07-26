@@ -283,6 +283,25 @@ func TestHandler_IncompleteSecretRef(t *testing.T) {
 	}
 }
 
+func TestHandler_EmptySecretIs500(t *testing.T) {
+	// An empty signing secret is the operator's misconfiguration, not a
+	// caller auth failure — must be 500, not 401.
+	ctc := githubTriggerClass()
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "github-webhook", Namespace: adapterNamespace},
+		Data:       map[string][]byte{"secret": {}},
+	}
+	c := newFakeClient(t, ctc, secret)
+	h := newHandler(c)
+
+	body := []byte(`{"action":"opened","issue":{"title":"x"}}`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, post(t, "/github", body, "sha256=abc"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for empty signing secret", rec.Code)
+	}
+}
+
 func TestHandler_SecretKeyMissing(t *testing.T) {
 	ctc := githubTriggerClass()
 	// Secret exists but with a different key than expected.

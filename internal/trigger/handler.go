@@ -126,6 +126,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	header := r.Header.Get(ctc.Spec.Signature.Header)
 	if err := VerifyHMAC(ctc.Spec.Signature.Algorithm, ctc.Spec.Signature.Prefix, header, secret, body); err != nil {
+		// An empty secret or unsupported algorithm is the operator's
+		// misconfiguration, not a caller auth failure — 500, not 401.
+		if errors.Is(err, ErrEmptySecret) || errors.Is(err, ErrUnsupportedAlgorithm) {
+			h.Log.Error(err, "Signature configuration is invalid", "triggerClass", ctc.Name)
+			metrics.ObserveWebhook(ctc.Name, metrics.ResultError)
+			writeStatus(w, http.StatusInternalServerError, "signature configuration error")
+			return
+		}
 		h.Log.V(1).Info("Rejected signature", "triggerClass", ctc.Name, "err", err.Error())
 		metrics.ObserveWebhook(ctc.Name, metrics.ResultRejectedSignature)
 		writeStatus(w, http.StatusUnauthorized, "signature verification failed")

@@ -82,7 +82,9 @@ func (s *Server) Start(ctx context.Context) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			s.Log.Error(err, "Trigger server shutdown did not complete cleanly")
+		}
 		return nil
 	case err := <-serveErr:
 		return err
