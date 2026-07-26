@@ -74,7 +74,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:${{ github.ref_name }}
             ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:latest
-          provenance: false
+          provenance: true
 
   release:
     name: Publish GitHub Release
