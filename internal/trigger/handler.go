@@ -73,6 +73,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defer func() { _ = r.Body.Close() }()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil {
 		var maxErr *http.MaxBytesError
@@ -81,11 +82,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeStatus(w, http.StatusRequestEntityTooLarge, "body too large")
 			return
 		}
+		// Pre-authentication path: no internal detail in the response.
+		h.Log.V(1).Info("Rejected unreadable body", "err", err.Error())
 		metrics.ObserveWebhook("", metrics.ResultRejectedBadBody)
-		writeStatus(w, http.StatusBadRequest, "read body: "+err.Error())
+		writeStatus(w, http.StatusBadRequest, "malformed request body")
 		return
 	}
-	defer func() { _ = r.Body.Close() }()
 
 	if !json.Valid(body) {
 		metrics.ObserveWebhook("", metrics.ResultRejectedBadBody)
@@ -95,8 +97,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctc, err := h.findTriggerClass(r.Context(), r.URL.Path)
 	if err != nil {
+		// Pre-authentication path: no internal detail in the response.
+		h.Log.Error(err, "Failed to look up trigger class", "path", r.URL.Path)
 		metrics.ObserveWebhook("", metrics.ResultError)
-		writeStatus(w, http.StatusInternalServerError, "lookup trigger class: "+err.Error())
+		writeStatus(w, http.StatusInternalServerError, "lookup trigger class")
 		return
 	}
 	if ctc == nil {
@@ -193,7 +197,7 @@ func (h *Handler) lookupSignatureSecret(ctx context.Context, ctc *conveyorv1alph
 	key := types.NamespacedName{Name: ref.Name, Namespace: h.Namespace}
 	if err := h.Client.Get(ctx, key, &secret); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("secret %s/%s not found", key.Namespace, key.Name)
+			return nil, fmt.Errorf("secret %s/%s not found: %w", key.Namespace, key.Name, err)
 		}
 		return nil, err
 	}

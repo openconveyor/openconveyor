@@ -256,6 +256,11 @@ func TestHandler_AmbiguousPath(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 for ambiguous path", rec.Code)
 	}
+	// Pre-authentication failure: the response must not leak internal
+	// detail such as ClusterTriggerClass names or counts.
+	if got := rec.Body.String(); strings.Contains(got, "ClusterTriggerClass") {
+		t.Errorf("response leaks internal detail: %s", got)
+	}
 }
 
 func TestHandler_IncompleteSecretRef(t *testing.T) {
