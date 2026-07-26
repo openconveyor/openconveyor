@@ -4,18 +4,22 @@ run:
 linters:
   default: none
   enable:
+    - bodyclose
     - copyloopvar
     - dupl
     - errcheck
+    - errorlint
     - ginkgolinter
     - goconst
     - gocyclo
+    - gosec
     - govet
     - ineffassign
     - lll
     - modernize
     - misspell
     - nakedret
+    - nilerr
     - prealloc
     - revive
     - staticcheck
@@ -42,9 +46,13 @@ linters:
           - lll
         path: api/*
       - linters:
-          - dupl
           - lll
         path: internal/*
+      # e2e helpers shell out to kubectl with test-controlled arguments;
+      # G204 is noise there and the package never ships in the image.
+      - linters:
+          - gosec
+        path: test/*
     paths:
       - third_party$
       - builtin$
