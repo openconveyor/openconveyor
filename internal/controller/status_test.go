@@ -10,6 +10,8 @@ package controller
 import (
 	"testing"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -84,6 +86,150 @@ func TestEqualStatus(t *testing.T) {
 			t.Error("equalStatus() = false for reordered but equal conditions, want true")
 		}
 	})
+}
+
+// jobWithCondition builds a Job whose status carries a single condition.
+func jobWithCondition(condType batchv1.JobConditionType, status corev1.ConditionStatus, reason string) *batchv1.Job {
+	return &batchv1.Job{
+		Status: batchv1.JobStatus{
+			Conditions: []batchv1.JobCondition{{Type: condType, Status: status, Reason: reason}},
+		},
+	}
+}
+
+func TestDerivePhase(t *testing.T) {
+	now := metav1.Now()
+	tests := []struct {
+		name       string
+		job        *batchv1.Job
+		wantPhase  conveyorv1alpha1.TaskPhase
+		wantReason string
+	}{
+		{
+			name:       "JobComplete → Completed",
+			job:        jobWithCondition(batchv1.JobComplete, corev1.ConditionTrue, ""),
+			wantPhase:  conveyorv1alpha1.TaskPhaseCompleted,
+			wantReason: reasonCompleted,
+		},
+		{
+			name:       "JobSuccessCriteriaMet → Completed",
+			job:        jobWithCondition(batchv1.JobSuccessCriteriaMet, corev1.ConditionTrue, ""),
+			wantPhase:  conveyorv1alpha1.TaskPhaseCompleted,
+			wantReason: reasonCompleted,
+		},
+		{
+			name:       "JobFailed → Failed",
+			job:        jobWithCondition(batchv1.JobFailed, corev1.ConditionTrue, "BackoffLimitExceeded"),
+			wantPhase:  conveyorv1alpha1.TaskPhaseFailed,
+			wantReason: reasonFailed,
+		},
+		{
+			name:       "JobFailed with DeadlineExceeded → TimedOut",
+			job:        jobWithCondition(batchv1.JobFailed, corev1.ConditionTrue, batchv1.JobReasonDeadlineExceeded),
+			wantPhase:  conveyorv1alpha1.TaskPhaseTimedOut,
+			wantReason: reasonTimedOut,
+		},
+		{
+			name:       "condition with Status=False is skipped",
+			job:        jobWithCondition(batchv1.JobFailed, corev1.ConditionFalse, "BackoffLimitExceeded"),
+			wantPhase:  conveyorv1alpha1.TaskPhasePending,
+			wantReason: reasonPending,
+		},
+		{
+			name:       "active pods → Running",
+			job:        &batchv1.Job{Status: batchv1.JobStatus{Active: 1}},
+			wantPhase:  conveyorv1alpha1.TaskPhaseRunning,
+			wantReason: reasonRunning,
+		},
+		{
+			name:       "start time set → Running",
+			job:        &batchv1.Job{Status: batchv1.JobStatus{StartTime: &now}},
+			wantPhase:  conveyorv1alpha1.TaskPhaseRunning,
+			wantReason: reasonRunning,
+		},
+		{
+			name:       "empty status → Pending",
+			job:        &batchv1.Job{},
+			wantPhase:  conveyorv1alpha1.TaskPhasePending,
+			wantReason: reasonPending,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			phase, reason, _ := derivePhase(tt.job)
+			if phase != tt.wantPhase {
+				t.Errorf("derivePhase() phase = %v, want %v", phase, tt.wantPhase)
+			}
+			if reason != tt.wantReason {
+				t.Errorf("derivePhase() reason = %v, want %v", reason, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestConditionStatusFor(t *testing.T) {
+	tests := []struct {
+		phase conveyorv1alpha1.TaskPhase
+		want  metav1.ConditionStatus
+	}{
+		{conveyorv1alpha1.TaskPhasePending, metav1.ConditionUnknown},
+		{conveyorv1alpha1.TaskPhaseRunning, metav1.ConditionUnknown},
+		{conveyorv1alpha1.TaskPhaseCompleted, metav1.ConditionTrue},
+		{conveyorv1alpha1.TaskPhaseFailed, metav1.ConditionFalse},
+		{conveyorv1alpha1.TaskPhaseTimedOut, metav1.ConditionFalse},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.phase), func(t *testing.T) {
+			if got := conditionStatusFor(tt.phase); got != tt.want {
+				t.Errorf("conditionStatusFor(%v) = %v, want %v", tt.phase, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsTerminal(t *testing.T) {
+	tests := []struct {
+		phase conveyorv1alpha1.TaskPhase
+		want  bool
+	}{
+		{conveyorv1alpha1.TaskPhasePending, false},
+		{conveyorv1alpha1.TaskPhaseRunning, false},
+		{conveyorv1alpha1.TaskPhaseCompleted, true},
+		{conveyorv1alpha1.TaskPhaseFailed, true},
+		{conveyorv1alpha1.TaskPhaseTimedOut, true},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.phase), func(t *testing.T) {
+			if got := isTerminal(tt.phase); got != tt.want {
+				t.Errorf("isTerminal(%v) = %v, want %v", tt.phase, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTimesEqual(t *testing.T) {
+	t1 := metav1.NewTime(metav1.Now().Truncate(0))
+	t1Copy := t1
+	t2 := metav1.NewTime(t1.Add(1))
+
+	tests := []struct {
+		name string
+		a, b *metav1.Time
+		want bool
+	}{
+		{"both nil", nil, nil, true},
+		{"a nil", nil, &t1, false},
+		{"b nil", &t1, nil, false},
+		{"equal", &t1, &t1Copy, true},
+		{"different", &t1, &t2, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := timesEqual(tt.a, tt.b); got != tt.want {
+				t.Errorf("timesEqual() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
 // TestSetStatusConditionRefreshesObservedGeneration pins the behavior the
