@@ -633,7 +633,7 @@ var _ = Describe("Task Controller", func() {
 	})
 
 	Context("invalid spec", func() {
-		It("marks the Task Failed when spec.resources.timeout is zero", func() {
+		It("rejects a Task with a zero timeout at admission", func() {
 			task := &conveyorv1alpha1.Task{
 				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
 				Spec: conveyorv1alpha1.TaskSpec{
@@ -642,16 +642,80 @@ var _ = Describe("Task Controller", func() {
 					// Timeout intentionally zero
 				},
 			}
-			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+			err := k8sClient.Create(ctx, task)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("spec.resources.timeout"))
+		})
 
-			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
-			Expect(err).NotTo(HaveOccurred())
+		It("rejects a Task without a prompt source at admission", func() {
+			task := &conveyorv1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
+				Spec: conveyorv1alpha1.TaskSpec{
+					Agent: conveyorv1alpha1.AgentRef{Ref: agentClassName},
+					Resources: conveyorv1alpha1.TaskResources{
+						Timeout: metav1.Duration{Duration: time.Minute},
+					},
+				},
+			}
+			err := k8sClient.Create(ctx, task)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("exactly one of inline, secretRef or configMapRef"))
+		})
 
-			var got conveyorv1alpha1.Task
-			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
-			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseFailed))
-			Expect(got.Status.Conditions).NotTo(BeEmpty())
-			Expect(got.Status.Conditions[0].Reason).To(Equal(reasonInvalidSpec))
+		It("rejects a Task with two prompt sources at admission", func() {
+			task := &conveyorv1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
+				Spec: conveyorv1alpha1.TaskSpec{
+					Agent: conveyorv1alpha1.AgentRef{Ref: agentClassName},
+					Prompt: conveyorv1alpha1.PromptSource{
+						Inline: "hi",
+						ConfigMapRef: &corev1.ConfigMapKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{Name: "prompts"},
+							Key:                  "p",
+						},
+					},
+					Resources: conveyorv1alpha1.TaskResources{
+						Timeout: metav1.Duration{Duration: time.Minute},
+					},
+				},
+			}
+			err := k8sClient.Create(ctx, task)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("exactly one of inline, secretRef or configMapRef"))
+		})
+
+		It("rejects a Task with a malformed cpu quantity at admission", func() {
+			task := &conveyorv1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
+				Spec: conveyorv1alpha1.TaskSpec{
+					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
+					Prompt: conveyorv1alpha1.PromptSource{Inline: "hi"},
+					Resources: conveyorv1alpha1.TaskResources{
+						CPU:     "not-a-cpu",
+						Timeout: metav1.Duration{Duration: time.Minute},
+					},
+				},
+			}
+			err := k8sClient.Create(ctx, task)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("spec.resources.cpu"))
+		})
+
+		It("rejects a Task with a malformed memory quantity at admission", func() {
+			task := &conveyorv1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
+				Spec: conveyorv1alpha1.TaskSpec{
+					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
+					Prompt: conveyorv1alpha1.PromptSource{Inline: "hi"},
+					Resources: conveyorv1alpha1.TaskResources{
+						Memory:  "10Gigabytes",
+						Timeout: metav1.Duration{Duration: time.Minute},
+					},
+				},
+			}
+			err := k8sClient.Create(ctx, task)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring("spec.resources.memory"))
 		})
 
 		It("keeps the Task Pending with a requeue when the referenced AgentClass does not exist", func() {

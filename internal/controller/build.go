@@ -8,6 +8,7 @@ you may not use this file except in compliance with the License.
 package controller
 
 import (
+	"fmt"
 	"maps"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -113,6 +114,11 @@ func buildJob(
 		mounts = append(mounts, *configMount)
 	}
 
+	resourceReqs, err := buildResourceRequirements(task.Spec.Resources)
+	if err != nil {
+		return nil, err
+	}
+
 	container := corev1.Container{
 		Name:            "agent",
 		Image:           agent.Spec.Image,
@@ -120,7 +126,7 @@ func buildJob(
 		Command:         agent.Spec.Command,
 		Args:            agent.Spec.Args,
 		Env:             configEnv,
-		Resources:       buildResourceRequirements(task.Spec.Resources),
+		Resources:       resourceReqs,
 		SecurityContext: &corev1.SecurityContext{
 			RunAsNonRoot:             &runAsNonRoot,
 			RunAsUser:                &runAsUser,
@@ -165,22 +171,30 @@ func buildJob(
 	}, nil
 }
 
-func buildResourceRequirements(r conveyorv1alpha1.TaskResources) corev1.ResourceRequirements {
+func buildResourceRequirements(r conveyorv1alpha1.TaskResources) (corev1.ResourceRequirements, error) {
 	reqs := corev1.ResourceRequirements{}
 	if r.CPU == "" && r.Memory == "" {
-		return reqs
+		return reqs, nil
 	}
 	list := corev1.ResourceList{}
 	if r.CPU != "" {
-		list[corev1.ResourceCPU] = resource.MustParse(r.CPU)
+		q, err := resource.ParseQuantity(r.CPU)
+		if err != nil {
+			return reqs, &policy.PermanentError{Err: fmt.Errorf("spec.resources.cpu %q: %w", r.CPU, err)}
+		}
+		list[corev1.ResourceCPU] = q
 	}
 	if r.Memory != "" {
-		list[corev1.ResourceMemory] = resource.MustParse(r.Memory)
+		q, err := resource.ParseQuantity(r.Memory)
+		if err != nil {
+			return reqs, &policy.PermanentError{Err: fmt.Errorf("spec.resources.memory %q: %w", r.Memory, err)}
+		}
+		list[corev1.ResourceMemory] = q
 	}
 	// Requests == Limits for predictable scheduling; no burst headroom.
 	reqs.Requests = list.DeepCopy()
 	reqs.Limits = list
-	return reqs
+	return reqs, nil
 }
 
 // taskResourceName is the shared name for all resources materialized for a
