@@ -163,76 +163,63 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	return ctrl.Result{}, nil
 }
 
-func (r *TaskReconciler) ensureServiceAccount(ctx context.Context, task *conveyorv1alpha1.Task) error {
-	desired := buildServiceAccount(task)
+// ensureOwned upserts one owned resource: set the controller reference,
+// create when absent, otherwise copy the reconcilable fields onto the
+// live object and update. Labels always sync; mutate (optional) copies
+// the type-specific mutable fields.
+func ensureOwned[T client.Object](
+	ctx context.Context,
+	r *TaskReconciler,
+	task *conveyorv1alpha1.Task,
+	desired, existing T,
+	mutate func(existing, desired T),
+) error {
 	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
 		return err
 	}
 
-	var existing corev1.ServiceAccount
-	err := r.Get(ctx, client.ObjectKeyFromObject(desired), &existing)
+	err := r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
 	switch {
 	case apierrors.IsNotFound(err):
 		return r.Create(ctx, desired)
 	case err != nil:
 		return err
 	}
-	existing.Labels = desired.Labels
-	return r.Update(ctx, &existing)
+	if mutate != nil {
+		mutate(existing, desired)
+	}
+	existing.SetLabels(desired.GetLabels())
+	return r.Update(ctx, existing)
+}
+
+func (r *TaskReconciler) ensureServiceAccount(ctx context.Context, task *conveyorv1alpha1.Task) error {
+	return ensureOwned(ctx, r, task, buildServiceAccount(task), &corev1.ServiceAccount{}, nil)
 }
 
 // ensureRole materializes (or tears down) the namespaced Role for this
 // Task. No RBAC declared → delete any stray Role. Otherwise upsert.
 func (r *TaskReconciler) ensureRole(ctx context.Context, task *conveyorv1alpha1.Task) error {
 	desired := policy.BuildRole(task.Name, task.Namespace, task.Spec.Permissions.RBAC)
-	key := types.NamespacedName{Name: taskResourceName(task), Namespace: task.Namespace}
-
 	if desired == nil {
+		key := types.NamespacedName{Name: taskResourceName(task), Namespace: task.Namespace}
 		return r.deleteIfExists(ctx, key, &rbacv1.Role{})
 	}
-
-	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
-		return err
-	}
-
-	var existing rbacv1.Role
-	err := r.Get(ctx, key, &existing)
-	switch {
-	case apierrors.IsNotFound(err):
-		return r.Create(ctx, desired)
-	case err != nil:
-		return err
-	}
-	existing.Rules = desired.Rules
-	existing.Labels = desired.Labels
-	return r.Update(ctx, &existing)
+	return ensureOwned(ctx, r, task, desired, &rbacv1.Role{}, func(existing, desired *rbacv1.Role) {
+		existing.Rules = desired.Rules
+	})
 }
 
 func (r *TaskReconciler) ensureRoleBinding(ctx context.Context, task *conveyorv1alpha1.Task) error {
 	desired := policy.BuildRoleBinding(task.Name, task.Namespace, task.Spec.Permissions.RBAC)
-	key := types.NamespacedName{Name: taskResourceName(task), Namespace: task.Namespace}
-
 	if desired == nil {
+		key := types.NamespacedName{Name: taskResourceName(task), Namespace: task.Namespace}
 		return r.deleteIfExists(ctx, key, &rbacv1.RoleBinding{})
 	}
-
-	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
-		return err
-	}
-
-	var existing rbacv1.RoleBinding
-	err := r.Get(ctx, key, &existing)
-	switch {
-	case apierrors.IsNotFound(err):
-		return r.Create(ctx, desired)
-	case err != nil:
-		return err
-	}
-	// RoleRef is immutable per K8s — if it drifted somehow, only Subjects
-	// and metadata can be patched. Leaving RoleRef untouched here.
-	existing.Subjects = desired.Subjects
-	existing.Labels = desired.Labels
-	return r.Update(ctx, &existing)
+	return ensureOwned(ctx, r, task, desired, &rbacv1.RoleBinding{}, func(existing, desired *rbacv1.RoleBinding) {
+		// RoleRef is immutable per K8s — if it drifted somehow, only Subjects
+		// and metadata can be patched. Leaving RoleRef untouched here.
+		existing.Subjects = desired.Subjects
+	})
 }
 
 // ensureNetworkPolicy resolves the Task's egress allowlist to CIDRs and
@@ -249,21 +236,10 @@ func (r *TaskReconciler) ensureNetworkPolicy(ctx context.Context, task *conveyor
 	if err != nil {
 		return err
 	}
-	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
-		return err
-	}
-
-	var existing networkingv1.NetworkPolicy
-	getErr := r.Get(ctx, client.ObjectKeyFromObject(desired), &existing)
-	switch {
-	case apierrors.IsNotFound(getErr):
-		return r.Create(ctx, desired)
-	case getErr != nil:
-		return getErr
-	}
-	existing.Spec = desired.Spec
-	existing.Labels = desired.Labels
-	return r.Update(ctx, &existing)
+	return ensureOwned(ctx, r, task, desired, &networkingv1.NetworkPolicy{},
+		func(existing, desired *networkingv1.NetworkPolicy) {
+			existing.Spec = desired.Spec
+		})
 }
 
 func (r *TaskReconciler) ensureJob(
@@ -311,22 +287,9 @@ func (r *TaskReconciler) ensurePromptConfigMap(ctx context.Context, task *convey
 	if desired == nil {
 		return r.deleteIfExists(ctx, key, &corev1.ConfigMap{})
 	}
-
-	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
-		return err
-	}
-
-	var existing corev1.ConfigMap
-	err := r.Get(ctx, key, &existing)
-	switch {
-	case apierrors.IsNotFound(err):
-		return r.Create(ctx, desired)
-	case err != nil:
-		return err
-	}
-	existing.Data = desired.Data
-	existing.Labels = desired.Labels
-	return r.Update(ctx, &existing)
+	return ensureOwned(ctx, r, task, desired, &corev1.ConfigMap{}, func(existing, desired *corev1.ConfigMap) {
+		existing.Data = desired.Data
+	})
 }
 
 // ensureConfigConfigMap owns the ConfigMap that carries spec.agent.config
@@ -347,22 +310,9 @@ func (r *TaskReconciler) ensureConfigConfigMap(
 	if desired == nil {
 		return r.deleteIfExists(ctx, key, &corev1.ConfigMap{})
 	}
-
-	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
-		return err
-	}
-
-	var existing corev1.ConfigMap
-	err := r.Get(ctx, key, &existing)
-	switch {
-	case apierrors.IsNotFound(err):
-		return r.Create(ctx, desired)
-	case err != nil:
-		return err
-	}
-	existing.Data = desired.Data
-	existing.Labels = desired.Labels
-	return r.Update(ctx, &existing)
+	return ensureOwned(ctx, r, task, desired, &corev1.ConfigMap{}, func(existing, desired *corev1.ConfigMap) {
+		existing.Data = desired.Data
+	})
 }
 
 func (r *TaskReconciler) deleteIfExists(ctx context.Context, key types.NamespacedName, obj client.Object) error {
