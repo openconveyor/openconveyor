@@ -420,6 +420,63 @@ var _ = Describe("Task Controller", func() {
 		})
 	})
 
+	Context("terminal Tasks — TTL Job deletion must not re-run the agent", func() {
+		It("does not recreate the Job of a Completed Task", func() {
+			By("creating a Task and reconciling it into a Job")
+			task := &conveyorv1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
+				Spec: conveyorv1alpha1.TaskSpec{
+					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
+					Prompt: conveyorv1alpha1.PromptSource{Inline: "run once"},
+					Resources: conveyorv1alpha1.TaskResources{
+						Timeout: metav1.Duration{Duration: 5 * time.Minute},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("marking the Job complete")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.CompletionTime = &now
+			job.Status.Succeeded = 1
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue},
+				batchv1.JobCondition{Type: batchv1.JobComplete, Status: corev1.ConditionTrue},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			var got conveyorv1alpha1.Task
+			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
+			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseCompleted))
+
+			By("deleting the Job, as TTLSecondsAfterFinished would")
+			propagation := metav1.DeletePropagationBackground
+			Expect(k8sClient.Delete(ctx, &job, &client.DeleteOptions{PropagationPolicy: &propagation})).To(Succeed())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, taskKey, &batchv1.Job{}))
+			}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
+
+			By("reconciling again, as the Job deletion event would trigger")
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("asserting no new Job appears and the Task stays Completed")
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, taskKey, &batchv1.Job{}))).To(BeTrue(),
+				"terminal Task must not get a new Job")
+			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
+			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseCompleted))
+		})
+	})
+
 	Context("invalid spec", func() {
 		It("marks the Task Failed when spec.resources.timeout is zero", func() {
 			task := &conveyorv1alpha1.Task{

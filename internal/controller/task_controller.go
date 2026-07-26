@@ -75,6 +75,13 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Terminal Tasks are never reconciled again: once the Job finishes,
+	// its TTLSecondsAfterFinished deletion queues a reconcile that would
+	// otherwise recreate the Job and re-run a side-effectful agent.
+	if isTerminal(task.Status.Phase) {
+		return ctrl.Result{}, nil
+	}
+
 	if err := validateTask(&task); err != nil {
 		metrics.ObserveReconcileError(metrics.StepValidate)
 		return ctrl.Result{}, r.markInvalid(ctx, &task, reasonInvalidSpec, err.Error())
