@@ -20,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -226,6 +225,8 @@ func (r *TaskReconciler) ensureRoleBinding(ctx context.Context, task *conveyorv1
 func (r *TaskReconciler) ensureNetworkPolicy(ctx context.Context, task *conveyorv1alpha1.Task, egress []string) error {
 	resolver := r.Resolver
 	if resolver == nil {
+		// SetupWithManager defaults this; the fallback covers reconcilers
+		// constructed directly (tests driving Reconcile by hand).
 		resolver = policy.DefaultResolver{}
 	}
 
@@ -342,8 +343,12 @@ func (r *TaskReconciler) tasksForAgentClass(ctx context.Context, obj client.Obje
 
 // SetupWithManager wires the reconciler up to watch Tasks, owned Jobs,
 // and the ClusterAgentClasses that Tasks reference.
-func (r *TaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &conveyorv1alpha1.Task{}, taskAgentRefIndex,
+func (r *TaskReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+	if r.Resolver == nil {
+		r.Resolver = policy.DefaultResolver{}
+	}
+
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &conveyorv1alpha1.Task{}, taskAgentRefIndex,
 		func(obj client.Object) []string {
 			task := obj.(*conveyorv1alpha1.Task)
 			if task.Spec.Agent.Ref == "" {
@@ -356,7 +361,7 @@ func (r *TaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&conveyorv1alpha1.Task{}).
-		Owns(&batchv1.Job{}, builder.WithPredicates()).
+		Owns(&batchv1.Job{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&rbacv1.Role{}).

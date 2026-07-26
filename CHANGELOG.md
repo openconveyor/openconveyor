@@ -45,6 +45,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The controller no longer uses panicking `resource.MustParse` when
   building Job resource requirements; malformed quantities now
   return a permanent error that marks the Task `Failed`.
+- **Production JSON logging by default.** The manager previously ran
+  with zap's development encoder; pass `--zap-devel` to restore the
+  human-readable output for local runs.
+- The trigger adapter answers webhook requests with **500 instead of
+  401** when the signature failure is the operator's misconfiguration
+  (empty signing secret, unsupported algorithm). Missing or
+  mismatched signatures still get 401.
+- The manager's ClusterRole now includes `clustertriggerclasses`
+  (get/list/watch) and `secrets` (get) — the trigger adapter needed
+  both and previously hit Forbidden when enabled. The client cache is
+  disabled for Secrets so no cluster-wide Secret watch is opened.
 
 ## [0.1.0] — 2026-04-26
 
