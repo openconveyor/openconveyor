@@ -79,6 +79,13 @@ Requires a Kubernetes 1.29+ apiserver (CEL admission validation).
   both and previously hit Forbidden when enabled. The client cache is
   disabled for Secrets so no cluster-wide Secret watch is opened.
 
+### Security
+
+- Dependency bumps for published advisories: `google.golang.org/grpc`
+  v1.82.1 (GHSA authorization bypass via `:path`, xDS RBAC/HTTP2),
+  `go.opentelemetry.io/otel/sdk` v1.43.0, `github.com/google/cel-go`
+  v0.29.0.
+
 ## [0.1.0] — 2026-04-26
 
 First public alpha release. Installable in one command:
