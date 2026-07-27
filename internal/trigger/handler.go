@@ -37,13 +37,26 @@ const maxBodyBytes = 1 << 20
 //
 // One Handler per process; routes are discovered dynamically from the
 // cluster so new ClusterTriggerClass objects take effect without a restart.
-// The Client is expected to be cache-backed (mgr.GetClient()) so reads
-// during high-volume webhook bursts stay in-process.
+// The Client is expected to be cache-backed (mgr.GetClient()) so
+// ClusterTriggerClass reads during high-volume webhook bursts stay
+// in-process. Secret reads bypass the cache (see cmd/main.go) so the
+// manager never opens a cluster-wide Secret watch; HMAC key lookups are
+// low-volume live reads.
 type Handler struct {
-	Client    client.Client
-	Namespace string // namespace where HMAC Secrets live (usually the adapter's)
-	Log       logr.Logger
+	Client client.Client
+	// SecretNamespace is where the HMAC Secrets referenced by
+	// ClusterTriggerClasses live (usually the adapter's own namespace).
+	SecretNamespace string
+	// DefaultTaskNamespace receives emitted Tasks whose template leaves
+	// the namespace unset.
+	DefaultTaskNamespace string
+	Log                  logr.Logger
 }
+
+var _ http.Handler = (*Handler)(nil)
+
+// +kubebuilder:rbac:groups=openconveyor.ai,resources=clustertriggerclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 // ServeHTTP validates and dispatches a single webhook request.
 //
@@ -67,6 +80,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defer func() { _ = r.Body.Close() }()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil {
 		var maxErr *http.MaxBytesError
@@ -75,11 +89,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeStatus(w, http.StatusRequestEntityTooLarge, "body too large")
 			return
 		}
+		// Pre-authentication path: no internal detail in the response.
+		h.Log.V(1).Info("Rejected unreadable body", "err", err.Error())
 		metrics.ObserveWebhook("", metrics.ResultRejectedBadBody)
-		writeStatus(w, http.StatusBadRequest, "read body: "+err.Error())
+		writeStatus(w, http.StatusBadRequest, "malformed request body")
 		return
 	}
-	defer func() { _ = r.Body.Close() }()
 
 	if !json.Valid(body) {
 		metrics.ObserveWebhook("", metrics.ResultRejectedBadBody)
@@ -89,8 +104,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctc, err := h.findTriggerClass(r.Context(), r.URL.Path)
 	if err != nil {
+		// Pre-authentication path: no internal detail in the response.
+		h.Log.Error(err, "Failed to look up trigger class", "path", r.URL.Path)
 		metrics.ObserveWebhook("", metrics.ResultError)
-		writeStatus(w, http.StatusInternalServerError, "lookup trigger class: "+err.Error())
+		writeStatus(w, http.StatusInternalServerError, "lookup trigger class")
 		return
 	}
 	if ctc == nil {
@@ -109,6 +126,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	header := r.Header.Get(ctc.Spec.Signature.Header)
 	if err := VerifyHMAC(ctc.Spec.Signature.Algorithm, ctc.Spec.Signature.Prefix, header, secret, body); err != nil {
+		// An empty secret or unsupported algorithm is the operator's
+		// misconfiguration, not a caller auth failure — 500, not 401.
+		if errors.Is(err, ErrEmptySecret) || errors.Is(err, ErrUnsupportedAlgorithm) {
+			h.Log.Error(err, "Signature configuration is invalid", "triggerClass", ctc.Name)
+			metrics.ObserveWebhook(ctc.Name, metrics.ResultError)
+			writeStatus(w, http.StatusInternalServerError, "signature configuration error")
+			return
+		}
 		h.Log.V(1).Info("Rejected signature", "triggerClass", ctc.Name, "err", err.Error())
 		metrics.ObserveWebhook(ctc.Name, metrics.ResultRejectedSignature)
 		writeStatus(w, http.StatusUnauthorized, "signature verification failed")
@@ -127,11 +152,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusBadRequest, "build task: "+err.Error())
 		return
 	}
-	// Default the emitted Task's namespace to the adapter's own when the
-	// template left it unset — avoids accidentally dumping Tasks into
-	// "default" on clusters where that namespace is unused.
+	// Default the emitted Task's namespace when the template left it
+	// unset — avoids accidentally dumping Tasks into "default" on
+	// clusters where that namespace is unused.
 	if task.Namespace == "" {
-		task.Namespace = h.Namespace
+		task.Namespace = h.DefaultTaskNamespace
 	}
 
 	if err := h.Client.Create(r.Context(), task); err != nil {
@@ -184,10 +209,10 @@ func (h *Handler) lookupSignatureSecret(ctx context.Context, ctc *conveyorv1alph
 		return nil, fmt.Errorf("signature.secretRef is incomplete")
 	}
 	var secret corev1.Secret
-	key := types.NamespacedName{Name: ref.Name, Namespace: h.Namespace}
+	key := types.NamespacedName{Name: ref.Name, Namespace: h.SecretNamespace}
 	if err := h.Client.Get(ctx, key, &secret); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("secret %s/%s not found", key.Namespace, key.Name)
+			return nil, fmt.Errorf("secret %s/%s not found: %w", key.Namespace, key.Name, err)
 		}
 		return nil, err
 	}

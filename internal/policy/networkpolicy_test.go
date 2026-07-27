@@ -16,21 +16,9 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 )
 
-type stubResolver struct {
-	table map[string][]string
-	err   error
-}
-
-func (s stubResolver) LookupHost(_ context.Context, host string) ([]string, error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	return s.table[host], nil
-}
-
 func TestBuildNetworkPolicy(t *testing.T) {
-	resolver := stubResolver{
-		table: map[string][]string{
+	resolver := StaticResolver{
+		Hosts: map[string][]string{
 			"api.example.com": {"203.0.113.1", "2001:db8::1"},
 			"only-v6.test":    {"2001:db8::42"},
 		},
@@ -118,7 +106,7 @@ func TestBuildNetworkPolicy(t *testing.T) {
 }
 
 func TestBuildNetworkPolicy_InvalidCIDR(t *testing.T) {
-	_, err := BuildNetworkPolicy(context.Background(), stubResolver{}, "demo", "ns", []string{"not-a-cidr/99"})
+	_, err := BuildNetworkPolicy(context.Background(), StaticResolver{}, "demo", "ns", []string{"not-a-cidr/99"})
 	if err == nil {
 		t.Fatal("expected error on invalid CIDR")
 	}
@@ -158,7 +146,7 @@ func TestBuildNetworkPolicy_ResolverError(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resolver := stubResolver{err: tc.err}
+			resolver := StaticResolver{Err: tc.err}
 			_, err := BuildNetworkPolicy(context.Background(), resolver, "demo", "ns", []string{"api.example.com"})
 			if err == nil {
 				t.Fatal("expected error when resolver fails")
@@ -174,8 +162,41 @@ func TestBuildNetworkPolicy_ResolverError(t *testing.T) {
 	}
 }
 
+// deadlineCheckingResolver records whether the ctx it receives carries a
+// deadline, and honors cancellation so a hung lookup cannot outlive it.
+type deadlineCheckingResolver struct {
+	sawDeadline *bool
+}
+
+func (r deadlineCheckingResolver) LookupHost(ctx context.Context, _ string) ([]string, error) {
+	_, ok := ctx.Deadline()
+	*r.sawDeadline = ok
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestBuildNetworkPolicy_LookupIsBounded(t *testing.T) {
+	var sawDeadline bool
+	// Parent ctx is cancelled immediately so the blocking resolver returns
+	// right away — the assertion is about the per-lookup deadline existing.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := BuildNetworkPolicy(ctx, deadlineCheckingResolver{sawDeadline: &sawDeadline}, "demo", "ns", []string{"api.example.com"})
+	if err == nil {
+		t.Fatal("expected error from cancelled lookup")
+	}
+	if !sawDeadline {
+		t.Error("resolver ctx has no deadline — a hung resolver would stall the reconcile worker")
+	}
+	var perm *PermanentError
+	if errors.As(err, &perm) {
+		t.Errorf("timeout must stay transient, got PermanentError: %v", err)
+	}
+}
+
 func TestBuildNetworkPolicy_PodSelectorBindsToTask(t *testing.T) {
-	np, err := BuildNetworkPolicy(context.Background(), stubResolver{}, "demo-task", "ns", nil)
+	np, err := BuildNetworkPolicy(context.Background(), StaticResolver{}, "demo-task", "ns", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

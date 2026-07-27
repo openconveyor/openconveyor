@@ -19,26 +19,57 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 	"github.com/openconveyor/openconveyor/internal/policy"
 )
 
-type fakeResolver struct {
-	table map[string][]string
-	err   error
+// Shared cadence for the Eventually polls sprinkled through the suite.
+const (
+	eventuallyTimeout = 5 * time.Second
+	eventuallyPoll    = 100 * time.Millisecond
+)
+
+// newTask builds a Task with the minimal valid spec (agent "hello",
+// inline prompt, 5m timeout) and applies opts on top.
+//
+//nolint:unparam // namespace is part of the builder contract even though every spec uses "default" today
+func newTask(name, namespace string, opts ...func(*conveyorv1alpha1.Task)) *conveyorv1alpha1.Task {
+	task := &conveyorv1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: conveyorv1alpha1.TaskSpec{
+			Agent:  conveyorv1alpha1.AgentRef{Ref: "hello"},
+			Prompt: conveyorv1alpha1.PromptSource{Inline: "say hello"},
+			Resources: conveyorv1alpha1.TaskResources{
+				Timeout: metav1.Duration{Duration: 5 * time.Minute},
+			},
+		},
+	}
+	for _, opt := range opts {
+		opt(task)
+	}
+	return task
 }
 
-func (f fakeResolver) LookupHost(_ context.Context, host string) ([]string, error) {
-	if f.err != nil {
-		return nil, f.err
+func withAgentRef(ref string) func(*conveyorv1alpha1.Task) {
+	return func(t *conveyorv1alpha1.Task) { t.Spec.Agent.Ref = ref }
+}
+
+func withEgress(hosts ...string) func(*conveyorv1alpha1.Task) {
+	return func(t *conveyorv1alpha1.Task) { t.Spec.Permissions.Egress = hosts }
+}
+
+func withConfig(config string) func(*conveyorv1alpha1.Task) {
+	return func(t *conveyorv1alpha1.Task) {
+		t.Spec.Agent.Config = &runtime.RawExtension{Raw: []byte(config)}
 	}
-	return f.table[host], nil
 }
 
 var _ = Describe("Task Controller", func() {
@@ -55,30 +86,46 @@ var _ = Describe("Task Controller", func() {
 		return &TaskReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
-			Resolver: fakeResolver{
-				table: map[string][]string{
+			Resolver: policy.StaticResolver{
+				Hosts: map[string][]string{
 					"api.example.com": {"203.0.113.10"},
 				},
 			},
 		}
 	}
 
-	BeforeEach(func() {
-		By("ensuring a ClusterAgentClass exists")
+	// ensureAgentClass gets-or-creates a ClusterAgentClass and registers
+	// its deletion for cleanup after the spec.
+	ensureAgentClass := func(spec conveyorv1alpha1.ClusterAgentClassSpec, name string) {
 		agent := &conveyorv1alpha1.ClusterAgentClass{
-			ObjectMeta: metav1.ObjectMeta{Name: agentClassName},
-			Spec: conveyorv1alpha1.ClusterAgentClassSpec{
-				Image:   "busybox:1.36",
-				Command: []string{"echo"},
-				Args:    []string{"hello"},
-			},
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec:       spec,
 		}
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: agentClassName}, agent)
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, agent)
 		if apierrors.IsNotFound(err) {
 			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
 		} else {
 			Expect(err).NotTo(HaveOccurred())
 		}
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, agent)
+		})
+	}
+
+	// readyCondition fetches the "Ready" condition off a Task's status.
+	readyConditionOf := func(task *conveyorv1alpha1.Task) *metav1.Condition {
+		cond := meta.FindStatusCondition(task.Status.Conditions, conditionReady)
+		ExpectWithOffset(1, cond).NotTo(BeNil(), "expected a Ready condition")
+		return cond
+	}
+
+	BeforeEach(func() {
+		By("ensuring a ClusterAgentClass exists")
+		ensureAgentClass(conveyorv1alpha1.ClusterAgentClassSpec{
+			Image:   "busybox:1.36",
+			Command: []string{"echo"},
+			Args:    []string{"hello"},
+		}, agentClassName)
 	})
 
 	AfterEach(func() {
@@ -105,7 +152,7 @@ var _ = Describe("Task Controller", func() {
 			_ = k8sClient.Delete(ctx, obj, deleteOpts)
 		}
 		// The prompt and config ConfigMaps have different names — handle separately.
-		for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.ConfigConfigMapName(taskName)} {
+		for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.AgentConfigMapName(taskName)} {
 			cm := &corev1.ConfigMap{}
 			cm.SetName(name)
 			cm.SetNamespace(taskNamespace)
@@ -117,56 +164,51 @@ var _ = Describe("Task Controller", func() {
 					return false
 				}
 			}
-			for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.ConfigConfigMapName(taskName)} {
+			for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.AgentConfigMapName(taskName)} {
 				cmKey := types.NamespacedName{Name: name, Namespace: taskNamespace}
 				if err := k8sClient.Get(ctx, cmKey, &corev1.ConfigMap{}); !apierrors.IsNotFound(err) {
 					return false
 				}
 			}
 			return true
-		}, 5*time.Second, 100*time.Millisecond).Should(BeTrue(), "owned resources must be gone before next spec")
+		}, eventuallyTimeout, eventuallyPoll).Should(BeTrue(), "owned resources must be gone before next spec")
 	})
 
 	Context("security baseline — a Task with no declared permissions", func() {
-		It("materializes a hardened Job and ServiceAccount with zero k8s/egress/secret access", func() {
-			By("creating a minimal valid Task")
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "say hello"},
-					Resources: conveyorv1alpha1.TaskResources{
-						Timeout: metav1.Duration{Duration: 5 * time.Minute},
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+		var job batchv1.Job
 
-			By("reconciling")
+		BeforeEach(func() {
+			By("creating a minimal valid Task and reconciling once")
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace))).To(Succeed())
 			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
+			job = batchv1.Job{}
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+		})
 
-			By("owning a ServiceAccount (token automount is enforced at the pod spec, not the SA)")
+		It("owns a ServiceAccount (token automount is enforced at the pod spec, not the SA)", func() {
 			var sa corev1.ServiceAccount
 			Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
+		})
 
-			By("owning a Job with hardened pod-level security defaults")
-			var job batchv1.Job
-			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
-
+		It("materializes a Job with no retries and the Task timeout as its deadline", func() {
 			Expect(job.Spec.BackoffLimit).NotTo(BeNil())
 			Expect(*job.Spec.BackoffLimit).To(Equal(int32(0)), "no blind retries on failing agents")
 			Expect(job.Spec.ActiveDeadlineSeconds).NotTo(BeNil())
 			Expect(*job.Spec.ActiveDeadlineSeconds).To(Equal(int64(300)), "timeout plumbed from Task.spec.resources.timeout")
 			Expect(job.Spec.TTLSecondsAfterFinished).NotTo(BeNil())
+		})
 
+		It("hardens the pod spec and withholds the ServiceAccount token", func() {
 			pod := job.Spec.Template.Spec
 			Expect(pod.RestartPolicy).To(Equal(corev1.RestartPolicyNever))
 			Expect(pod.ServiceAccountName).To(Equal(taskName))
 			Expect(pod.AutomountServiceAccountToken).NotTo(BeNil())
 			Expect(*pod.AutomountServiceAccountToken).To(BeFalse(), "Phase 1 security baseline: no SA token in pod")
+		})
 
-			By("hardening the container security context")
+		It("hardens the container security context", func() {
+			pod := job.Spec.Template.Spec
 			Expect(pod.Containers).To(HaveLen(1))
 			sc := pod.Containers[0].SecurityContext
 			Expect(sc).NotTo(BeNil())
@@ -180,59 +222,67 @@ var _ = Describe("Task Controller", func() {
 			Expect(sc.Capabilities.Drop).To(ContainElement(corev1.Capability("ALL")))
 			Expect(sc.SeccompProfile).NotTo(BeNil())
 			Expect(sc.SeccompProfile.Type).To(Equal(corev1.SeccompProfileTypeRuntimeDefault))
+		})
 
-			By("setting controller ownership so Job + SA get GC'd with the Task")
+		It("sets controller ownership so Job + SA get GC'd with the Task", func() {
 			Expect(job.OwnerReferences).To(HaveLen(1))
 			Expect(job.OwnerReferences[0].Kind).To(Equal("Task"))
 			Expect(*job.OwnerReferences[0].Controller).To(BeTrue())
+		})
 
-			By("emitting a default-deny NetworkPolicy with no egress allowlist")
+		It("emits a default-deny NetworkPolicy with no egress allowlist", func() {
 			var np networkingv1.NetworkPolicy
 			Expect(k8sClient.Get(ctx, taskKey, &np)).To(Succeed())
 			Expect(np.Spec.Egress).To(BeEmpty(), "zero egress declared → deny-all")
 			Expect(np.Spec.PolicyTypes).To(ContainElement(networkingv1.PolicyTypeEgress))
 			Expect(np.Spec.PolicyTypes).To(ContainElement(networkingv1.PolicyTypeIngress))
 			Expect(np.Spec.Ingress).To(BeNil(), "ingress always denied for agent jobs")
+		})
 
-			By("not creating a Role or RoleBinding when RBAC is empty")
+		It("does not create a Role or RoleBinding when RBAC is empty", func() {
 			var role rbacv1.Role
-			err = k8sClient.Get(ctx, taskKey, &role)
-			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, taskKey, &role))).To(BeTrue())
 			var rb rbacv1.RoleBinding
-			err = k8sClient.Get(ctx, taskKey, &rb)
-			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, taskKey, &rb))).To(BeTrue())
+		})
+
+		It("repairs externally mutated ServiceAccount labels on the next reconcile", func() {
+			By("stripping the ownership labels out-of-band")
+			var sa corev1.ServiceAccount
+			Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
+			sa.Labels = nil
+			Expect(k8sClient.Update(ctx, &sa)).To(Succeed())
+
+			By("reconciling again restores them")
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
+			Expect(sa.Labels).To(HaveKeyWithValue(policy.LabelTaskName, taskName))
 		})
 	})
 
 	Context("declared permissions — Phase 2 policy generation", func() {
-		It("materializes NetworkPolicy, Role, RoleBinding, and projects secrets", func() {
-			By("creating a Task with secrets, egress, and RBAC all declared")
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "do work"},
-					Permissions: conveyorv1alpha1.Permissions{
-						Secrets: []string{"github-token"},
-						Egress:  []string{"api.example.com", "10.0.0.0/8"},
-						RBAC: []conveyorv1alpha1.RBACRule{
-							{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get"}},
-						},
-					},
-					Resources: conveyorv1alpha1.TaskResources{
-						Timeout: metav1.Duration{Duration: 5 * time.Minute},
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+		var job batchv1.Job
 
-			By("reconciling")
+		BeforeEach(func() {
+			By("creating a Task with secrets, egress, and RBAC all declared, then reconciling once")
+			task := newTask(taskName, taskNamespace, func(t *conveyorv1alpha1.Task) {
+				t.Spec.Permissions = conveyorv1alpha1.Permissions{
+					Secrets: []string{"github-token"},
+					Egress:  []string{"api.example.com", "10.0.0.0/8"},
+					RBAC: []conveyorv1alpha1.RBACRule{
+						{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get"}},
+					},
+				}
+			})
+			Expect(k8sClient.Create(ctx, task)).To(Succeed())
 			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
-
-			By("projecting the declared Secret as a read-only volume at /run/secrets/<name>")
-			var job batchv1.Job
+			job = batchv1.Job{}
 			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+		})
+
+		It("projects the declared Secret as a read-only volume at /run/secrets/<name>", func() {
 			pod := job.Spec.Template.Spec
 			Expect(pod.AutomountServiceAccountToken).NotTo(BeNil())
 			Expect(*pod.AutomountServiceAccountToken).To(BeTrue(), "RBAC declared → SA token mounted")
@@ -253,8 +303,9 @@ var _ = Describe("Task Controller", func() {
 				}
 			}
 			Expect(secretVol).NotTo(BeNil(), "expected secret volume in pod")
+		})
 
-			By("emitting a NetworkPolicy allowlisting resolved egress + DNS")
+		It("emits a NetworkPolicy allowlisting resolved egress + DNS", func() {
 			var np networkingv1.NetworkPolicy
 			Expect(k8sClient.Get(ctx, taskKey, &np)).To(Succeed())
 			Expect(np.Spec.Egress).NotTo(BeEmpty())
@@ -268,8 +319,9 @@ var _ = Describe("Task Controller", func() {
 			}
 			Expect(cidrs).To(HaveKey("10.0.0.0/8"), "CIDR passthrough")
 			Expect(cidrs).To(HaveKey("203.0.113.10/32"), "hostname resolved via fakeResolver")
+		})
 
-			By("creating a Role + RoleBinding from the declared verbs")
+		It("creates a Role + RoleBinding from the declared verbs", func() {
 			var role rbacv1.Role
 			Expect(k8sClient.Get(ctx, taskKey, &role)).To(Succeed())
 			Expect(role.Rules).To(HaveLen(1))
@@ -283,6 +335,63 @@ var _ = Describe("Task Controller", func() {
 			Expect(rb.Subjects[0].Kind).To(Equal(rbacv1.ServiceAccountKind))
 			Expect(rb.RoleRef.Name).To(Equal(taskName))
 		})
+
+		It("does not rewrite unchanged owned resources on a second reconcile", func() {
+			By("recording resourceVersions after the first reconcile")
+			versions := func() map[string]string {
+				var sa corev1.ServiceAccount
+				Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
+				var role rbacv1.Role
+				Expect(k8sClient.Get(ctx, taskKey, &role)).To(Succeed())
+				var rb rbacv1.RoleBinding
+				Expect(k8sClient.Get(ctx, taskKey, &rb)).To(Succeed())
+				var np networkingv1.NetworkPolicy
+				Expect(k8sClient.Get(ctx, taskKey, &np)).To(Succeed())
+				return map[string]string{
+					"serviceaccount": sa.ResourceVersion,
+					"role":           role.ResourceVersion,
+					"rolebinding":    rb.ResourceVersion,
+					"networkpolicy":  np.ResourceVersion,
+				}
+			}
+			before := versions()
+
+			By("reconciling again with no spec change")
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(versions()).To(Equal(before), "no-op reconcile must not bump resourceVersions")
+		})
+
+		It("restores Role rules and RoleBinding subjects mutated out-of-band", func() {
+			By("widening the Role and repointing the RoleBinding out-of-band")
+			var role rbacv1.Role
+			Expect(k8sClient.Get(ctx, taskKey, &role)).To(Succeed())
+			role.Rules = []rbacv1.PolicyRule{
+				{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get", "list"}},
+			}
+			Expect(k8sClient.Update(ctx, &role)).To(Succeed())
+
+			var rb rbacv1.RoleBinding
+			Expect(k8sClient.Get(ctx, taskKey, &rb)).To(Succeed())
+			rb.Subjects = []rbacv1.Subject{
+				{Kind: rbacv1.ServiceAccountKind, Name: "intruder", Namespace: taskNamespace},
+			}
+			Expect(k8sClient.Update(ctx, &rb)).To(Succeed())
+
+			By("reconciling again restores the declared policy")
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, taskKey, &role)).To(Succeed())
+			Expect(role.Rules).To(HaveLen(1))
+			Expect(role.Rules[0].Resources).To(ConsistOf("configmaps"))
+			Expect(role.Rules[0].Verbs).To(ConsistOf("get"))
+
+			Expect(k8sClient.Get(ctx, taskKey, &rb)).To(Succeed())
+			Expect(rb.Subjects).To(HaveLen(1))
+			Expect(rb.Subjects[0].Name).To(Equal(taskName))
+		})
 	})
 
 	Context("prompt projection — inline prompts go through an owned ConfigMap", func() {
@@ -291,46 +400,30 @@ var _ = Describe("Task Controller", func() {
 			promptMountPath = "/task/prompt"
 		)
 
+		cmKey := types.NamespacedName{
+			Name:      policy.InlinePromptConfigMapName(taskName),
+			Namespace: taskNamespace,
+		}
+
 		BeforeEach(func() {
-			agent := &conveyorv1alpha1.ClusterAgentClass{
-				ObjectMeta: metav1.ObjectMeta{Name: promptAgentName},
-				Spec: conveyorv1alpha1.ClusterAgentClassSpec{
-					Image: "busybox:1.36",
-					Inputs: conveyorv1alpha1.AgentInputs{
-						Prompt: &conveyorv1alpha1.AgentInputMount{Mount: promptMountPath},
-					},
+			ensureAgentClass(conveyorv1alpha1.ClusterAgentClassSpec{
+				Image: "busybox:1.36",
+				Inputs: conveyorv1alpha1.AgentInputs{
+					Prompt: &conveyorv1alpha1.AgentInputMount{Mount: promptMountPath},
 				},
-			}
-			err := k8sClient.Get(ctx, types.NamespacedName{Name: promptAgentName}, agent)
-			if apierrors.IsNotFound(err) {
-				Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-			} else {
-				Expect(err).NotTo(HaveOccurred())
-			}
+			}, promptAgentName)
+
+			task := newTask(taskName, taskNamespace, withAgentRef(promptAgentName), func(t *conveyorv1alpha1.Task) {
+				t.Spec.Prompt.Inline = "refactor foo.go"
+			})
+			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("materializes a ConfigMap with the inline body and projects it at the AgentClass mount", func() {
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent:  conveyorv1alpha1.AgentRef{Ref: promptAgentName},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "refactor foo.go"},
-					Resources: conveyorv1alpha1.TaskResources{
-						Timeout: metav1.Duration{Duration: 5 * time.Minute},
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, task)).To(Succeed())
-
-			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
-			Expect(err).NotTo(HaveOccurred())
-
 			By("owning a ConfigMap whose data matches the inline prompt")
 			var cm corev1.ConfigMap
-			cmKey := types.NamespacedName{
-				Name:      policy.InlinePromptConfigMapName(taskName),
-				Namespace: taskNamespace,
-			}
 			Expect(k8sClient.Get(ctx, cmKey, &cm)).To(Succeed())
 			Expect(cm.Data[policy.PromptKey]).To(Equal("refactor foo.go"))
 			Expect(cm.OwnerReferences).To(HaveLen(1))
@@ -360,45 +453,42 @@ var _ = Describe("Task Controller", func() {
 			Expect(promptVol.ConfigMap).NotTo(BeNil())
 			Expect(promptVol.ConfigMap.Name).To(Equal(cmKey.Name))
 		})
+
+		It("restores the prompt ConfigMap data after out-of-band mutation", func() {
+			By("hijacking the prompt body out-of-band")
+			var cm corev1.ConfigMap
+			Expect(k8sClient.Get(ctx, cmKey, &cm)).To(Succeed())
+			cm.Data[policy.PromptKey] = "rm -rf / instead"
+			Expect(k8sClient.Update(ctx, &cm)).To(Succeed())
+
+			By("reconciling again restores the declared prompt")
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, cmKey, &cm)).To(Succeed())
+			Expect(cm.Data[policy.PromptKey]).To(Equal("refactor foo.go"))
+		})
 	})
 
 	Context("AgentClass requires — merged into effective policy", func() {
 		const requiresAgentName = "requires-agent"
 
 		BeforeEach(func() {
-			agent := &conveyorv1alpha1.ClusterAgentClass{
-				ObjectMeta: metav1.ObjectMeta{Name: requiresAgentName},
-				Spec: conveyorv1alpha1.ClusterAgentClassSpec{
-					Image: "busybox:1.36",
-					Requires: conveyorv1alpha1.AgentRequirements{
-						Egress:  []string{"api.example.com"},
-						Secrets: []string{"agent-baseline-token"},
-					},
+			ensureAgentClass(conveyorv1alpha1.ClusterAgentClassSpec{
+				Image: "busybox:1.36",
+				Requires: conveyorv1alpha1.AgentRequirements{
+					Egress:  []string{"api.example.com"},
+					Secrets: []string{"agent-baseline-token"},
 				},
-			}
-			err := k8sClient.Get(ctx, types.NamespacedName{Name: requiresAgentName}, agent)
-			if apierrors.IsNotFound(err) {
-				Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-			} else {
-				Expect(err).NotTo(HaveOccurred())
-			}
+			}, requiresAgentName)
 		})
 
 		It("unions AgentClass requires with Task permissions into the materialized policy", func() {
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent:  conveyorv1alpha1.AgentRef{Ref: requiresAgentName},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "go"},
-					Permissions: conveyorv1alpha1.Permissions{
-						Secrets: []string{"task-token"},
-						Egress:  []string{"10.0.0.0/8"},
-					},
-					Resources: conveyorv1alpha1.TaskResources{
-						Timeout: metav1.Duration{Duration: 5 * time.Minute},
-					},
-				},
-			}
+			task := newTask(taskName, taskNamespace, withAgentRef(requiresAgentName), func(t *conveyorv1alpha1.Task) {
+				t.Spec.Permissions = conveyorv1alpha1.Permissions{
+					Secrets: []string{"task-token"},
+					Egress:  []string{"10.0.0.0/8"},
+				}
+			})
 			Expect(k8sClient.Create(ctx, task)).To(Succeed())
 
 			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
@@ -433,17 +523,7 @@ var _ = Describe("Task Controller", func() {
 	Context("terminal Tasks — TTL Job deletion must not re-run the agent", func() {
 		It("does not recreate the Job of a Completed Task", func() {
 			By("creating a Task and reconciling it into a Job")
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "run once"},
-					Resources: conveyorv1alpha1.TaskResources{
-						Timeout: metav1.Duration{Duration: 5 * time.Minute},
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace))).To(Succeed())
 
 			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
@@ -473,7 +553,7 @@ var _ = Describe("Task Controller", func() {
 			Expect(k8sClient.Delete(ctx, &job, &client.DeleteOptions{PropagationPolicy: &propagation})).To(Succeed())
 			Eventually(func() bool {
 				return apierrors.IsNotFound(k8sClient.Get(ctx, taskKey, &batchv1.Job{}))
-			}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
+			}, eventuallyTimeout, eventuallyPoll).Should(BeTrue())
 
 			By("reconciling again, as the Job deletion event would trigger")
 			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
@@ -487,30 +567,66 @@ var _ = Describe("Task Controller", func() {
 		})
 	})
 
-	Context("egress resolution failures", func() {
-		egressTask := func() *conveyorv1alpha1.Task {
-			return &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "hi"},
-					Permissions: conveyorv1alpha1.Permissions{
-						Egress: []string{"api.example.com"},
-					},
-					Resources: conveyorv1alpha1.TaskResources{
-						Timeout: metav1.Duration{Duration: time.Minute},
-					},
-				},
-			}
+	Context("Job outcome — failure conditions drive the terminal phase", func() {
+		// failJob marks the live Job failed with the given condition reason,
+		// mirroring how the job controller reports it.
+		failJob := func(reason string) {
+			var job batchv1.Job
+			ExpectWithOffset(1, k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Failed = 1
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: reason},
+				batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: reason},
+			)
+			ExpectWithOffset(1, k8sClient.Status().Update(ctx, &job)).To(Succeed())
 		}
 
+		BeforeEach(func() {
+			By("creating a Task and reconciling it into a Job")
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace))).To(Succeed())
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("marks the Task Failed when the Job fails", func() {
+			failJob("BackoffLimitExceeded")
+
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			var got conveyorv1alpha1.Task
+			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
+			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseFailed))
+			cond := readyConditionOf(&got)
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(reasonFailed))
+		})
+
+		It("marks the Task TimedOut when the Job exceeded its deadline", func() {
+			failJob(batchv1.JobReasonDeadlineExceeded)
+
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			var got conveyorv1alpha1.Task
+			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
+			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseTimedOut))
+			cond := readyConditionOf(&got)
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(reasonTimedOut))
+		})
+	})
+
+	Context("egress resolution failures", func() {
 		It("retries instead of failing the Task on a transient resolver error", func() {
-			Expect(k8sClient.Create(ctx, egressTask())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("api.example.com")))).To(Succeed())
 
 			By("reconciling with a resolver that times out")
 			broken := reconciler()
-			broken.Resolver = fakeResolver{
-				err: &net.DNSError{Err: "i/o timeout", Name: "api.example.com", IsTimeout: true, IsTemporary: true},
+			broken.Resolver = policy.StaticResolver{
+				Err: &net.DNSError{Err: "i/o timeout", Name: "api.example.com", IsTimeout: true, IsTemporary: true},
 			}
 			_, err := broken.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).To(HaveOccurred(), "transient error must be returned for backoff requeue")
@@ -529,11 +645,11 @@ var _ = Describe("Task Controller", func() {
 		})
 
 		It("marks the Task Failed when the hostname does not exist", func() {
-			Expect(k8sClient.Create(ctx, egressTask())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("api.example.com")))).To(Succeed())
 
 			broken := reconciler()
-			broken.Resolver = fakeResolver{
-				err: &net.DNSError{Err: "no such host", Name: "api.example.com", IsNotFound: true},
+			broken.Resolver = policy.StaticResolver{
+				Err: &net.DNSError{Err: "no such host", Name: "api.example.com", IsNotFound: true},
 			}
 			_, err := broken.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
@@ -541,29 +657,15 @@ var _ = Describe("Task Controller", func() {
 			var got conveyorv1alpha1.Task
 			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
 			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseFailed))
-			Expect(got.Status.Conditions[0].Reason).To(Equal(reasonEgressResolveFail))
+			Expect(readyConditionOf(&got).Reason).To(Equal(reasonEgressResolveFail))
 		})
 	})
 
 	Context("config projection", func() {
-		configTask := func(config string) *conveyorv1alpha1.Task {
-			return &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent: conveyorv1alpha1.AgentRef{
-						Ref:    agentClassName,
-						Config: &runtime.RawExtension{Raw: []byte(config)},
-					},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "do work"},
-					Resources: conveyorv1alpha1.TaskResources{
-						Timeout: metav1.Duration{Duration: 5 * time.Minute},
-					},
-				},
-			}
-		}
-
 		It("projects scalar config fields as container env vars", func() {
-			Expect(k8sClient.Create(ctx, configTask(`{"TARGET_REPO":"https://github.com/o/r.git","TARGET_BRANCH":"main"}`))).To(Succeed())
+			task := newTask(taskName, taskNamespace,
+				withConfig(`{"TARGET_REPO":"https://github.com/o/r.git","TARGET_BRANCH":"main"}`))
+			Expect(k8sClient.Create(ctx, task)).To(Succeed())
 
 			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
@@ -577,23 +679,17 @@ var _ = Describe("Task Controller", func() {
 
 		It("mounts the full config JSON when the AgentClass declares a config mount", func() {
 			const mountedClass = "config-mount-agent"
-			agent := &conveyorv1alpha1.ClusterAgentClass{
-				ObjectMeta: metav1.ObjectMeta{Name: mountedClass},
-				Spec: conveyorv1alpha1.ClusterAgentClassSpec{
-					Image:   "busybox:1.36",
-					Command: []string{"echo"},
-					Inputs: conveyorv1alpha1.AgentInputs{
-						Config: &conveyorv1alpha1.AgentInputMount{Mount: "/task/config.json"},
-					},
+			ensureAgentClass(conveyorv1alpha1.ClusterAgentClassSpec{
+				Image:   "busybox:1.36",
+				Command: []string{"echo"},
+				Inputs: conveyorv1alpha1.AgentInputs{
+					Config: &conveyorv1alpha1.AgentInputMount{Mount: "/task/config.json"},
 				},
-			}
-			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-			DeferCleanup(func() {
-				_ = k8sClient.Delete(ctx, agent)
-			})
+			}, mountedClass)
 
-			task := configTask(`{"TARGET_REPO":"o/r","nested":{"a":1}}`)
-			task.Spec.Agent.Ref = mountedClass
+			task := newTask(taskName, taskNamespace,
+				withAgentRef(mountedClass),
+				withConfig(`{"TARGET_REPO":"o/r","nested":{"a":1}}`))
 			Expect(k8sClient.Create(ctx, task)).To(Succeed())
 
 			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
@@ -601,7 +697,7 @@ var _ = Describe("Task Controller", func() {
 
 			By("owning a ConfigMap that carries the config JSON")
 			var cm corev1.ConfigMap
-			cmKey := types.NamespacedName{Name: policy.ConfigConfigMapName(taskName), Namespace: taskNamespace}
+			cmKey := types.NamespacedName{Name: policy.AgentConfigMapName(taskName), Namespace: taskNamespace}
 			Expect(k8sClient.Get(ctx, cmKey, &cm)).To(Succeed())
 			Expect(cm.Data[policy.ConfigKey]).To(MatchJSON(`{"TARGET_REPO":"o/r","nested":{"a":1}}`))
 			Expect(cm.OwnerReferences).To(HaveLen(1))
@@ -620,7 +716,7 @@ var _ = Describe("Task Controller", func() {
 		})
 
 		It("marks the Task Failed when config cannot be projected", func() {
-			Expect(k8sClient.Create(ctx, configTask(`{"nested":{"a":1}}`))).To(Succeed())
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withConfig(`{"nested":{"a":1}}`)))).To(Succeed())
 
 			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
@@ -628,151 +724,71 @@ var _ = Describe("Task Controller", func() {
 			var got conveyorv1alpha1.Task
 			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
 			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseFailed))
-			Expect(got.Status.Conditions[0].Reason).To(Equal(reasonInvalidSpec))
+			Expect(readyConditionOf(&got).Reason).To(Equal(reasonInvalidSpec))
 		})
 	})
 
 	Context("invalid spec", func() {
-		It("rejects a Task with a zero timeout at admission", func() {
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "hi"},
-					// Timeout intentionally zero
+		DescribeTable("rejects invalid Tasks at admission",
+			func(mutate func(*conveyorv1alpha1.Task), wantSubstring string) {
+				task := newTask(taskName, taskNamespace)
+				mutate(task)
+				err := k8sClient.Create(ctx, task)
+				Expect(apierrors.IsInvalid(err)).To(BeTrue())
+				Expect(err.Error()).To(ContainSubstring(wantSubstring))
+			},
+			Entry("zero timeout",
+				func(t *conveyorv1alpha1.Task) { t.Spec.Resources.Timeout = metav1.Duration{} },
+				"spec.resources.timeout"),
+			Entry("no prompt source",
+				func(t *conveyorv1alpha1.Task) { t.Spec.Prompt = conveyorv1alpha1.PromptSource{} },
+				"exactly one of inline, secretRef or configMapRef"),
+			Entry("two prompt sources",
+				func(t *conveyorv1alpha1.Task) {
+					t.Spec.Prompt.ConfigMapRef = &corev1.ConfigMapKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "prompts"},
+						Key:                  "p",
+					}
 				},
-			}
-			err := k8sClient.Create(ctx, task)
-			Expect(apierrors.IsInvalid(err)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("spec.resources.timeout"))
-		})
-
-		It("rejects a Task without a prompt source at admission", func() {
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent: conveyorv1alpha1.AgentRef{Ref: agentClassName},
-					Resources: conveyorv1alpha1.TaskResources{
-						Timeout: metav1.Duration{Duration: time.Minute},
-					},
-				},
-			}
-			err := k8sClient.Create(ctx, task)
-			Expect(apierrors.IsInvalid(err)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("exactly one of inline, secretRef or configMapRef"))
-		})
-
-		It("rejects a Task with two prompt sources at admission", func() {
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent: conveyorv1alpha1.AgentRef{Ref: agentClassName},
-					Prompt: conveyorv1alpha1.PromptSource{
-						Inline: "hi",
-						ConfigMapRef: &corev1.ConfigMapKeySelector{
-							LocalObjectReference: corev1.LocalObjectReference{Name: "prompts"},
-							Key:                  "p",
-						},
-					},
-					Resources: conveyorv1alpha1.TaskResources{
-						Timeout: metav1.Duration{Duration: time.Minute},
-					},
-				},
-			}
-			err := k8sClient.Create(ctx, task)
-			Expect(apierrors.IsInvalid(err)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("exactly one of inline, secretRef or configMapRef"))
-		})
-
-		It("rejects a Task with a malformed cpu quantity at admission", func() {
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "hi"},
-					Resources: conveyorv1alpha1.TaskResources{
-						CPU:     "not-a-cpu",
-						Timeout: metav1.Duration{Duration: time.Minute},
-					},
-				},
-			}
-			err := k8sClient.Create(ctx, task)
-			Expect(apierrors.IsInvalid(err)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("spec.resources.cpu"))
-		})
-
-		It("rejects a Task with a malformed memory quantity at admission", func() {
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent:  conveyorv1alpha1.AgentRef{Ref: agentClassName},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "hi"},
-					Resources: conveyorv1alpha1.TaskResources{
-						Memory:  "10Gigabytes",
-						Timeout: metav1.Duration{Duration: time.Minute},
-					},
-				},
-			}
-			err := k8sClient.Create(ctx, task)
-			Expect(apierrors.IsInvalid(err)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("spec.resources.memory"))
-		})
+				"exactly one of inline, secretRef or configMapRef"),
+			Entry("malformed cpu quantity",
+				func(t *conveyorv1alpha1.Task) { t.Spec.Resources.CPU = "not-a-cpu" },
+				"spec.resources.cpu"),
+			Entry("malformed memory quantity",
+				func(t *conveyorv1alpha1.Task) { t.Spec.Resources.Memory = "10Gigabytes" },
+				"spec.resources.memory"),
+		)
 
 		It("keeps the Task Pending with a requeue when the referenced AgentClass does not exist", func() {
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent:  conveyorv1alpha1.AgentRef{Ref: "nope-missing"},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "hi"},
-					Resources: conveyorv1alpha1.TaskResources{
-						Timeout: metav1.Duration{Duration: time.Minute},
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withAgentRef("nope-missing")))).To(Succeed())
 
 			res, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeNumerically(">", 0), "waiting Task must come back without a watch event")
 			Expect(res.RequeueAfter).To(Equal(agentClassMissingRequeue))
 
 			var got conveyorv1alpha1.Task
 			Expect(k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
 			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhasePending))
-			Expect(got.Status.Conditions[0].Reason).To(Equal(reasonAgentClassMissing))
-			Expect(got.Status.Conditions[0].Status).To(Equal(metav1.ConditionUnknown))
+			cond := readyConditionOf(&got)
+			Expect(cond.Reason).To(Equal(reasonAgentClassMissing))
+			Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
 		})
 
 		It("proceeds once the missing AgentClass is created afterwards", func() {
 			const lateClass = "late-agent-class"
-			task := &conveyorv1alpha1.Task{
-				ObjectMeta: metav1.ObjectMeta{Name: taskName, Namespace: taskNamespace},
-				Spec: conveyorv1alpha1.TaskSpec{
-					Agent:  conveyorv1alpha1.AgentRef{Ref: lateClass},
-					Prompt: conveyorv1alpha1.PromptSource{Inline: "hi"},
-					Resources: conveyorv1alpha1.TaskResources{
-						Timeout: metav1.Duration{Duration: time.Minute},
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withAgentRef(lateClass)))).To(Succeed())
 
 			By("reconciling before the class exists: Task waits")
 			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating the class the Task was waiting for")
-			agent := &conveyorv1alpha1.ClusterAgentClass{
-				ObjectMeta: metav1.ObjectMeta{Name: lateClass},
-				Spec: conveyorv1alpha1.ClusterAgentClassSpec{
-					Image:   "busybox:1.36",
-					Command: []string{"echo"},
-					Args:    []string{"hello"},
-				},
-			}
-			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-			DeferCleanup(func() {
-				_ = k8sClient.Delete(ctx, agent)
-			})
+			ensureAgentClass(conveyorv1alpha1.ClusterAgentClassSpec{
+				Image:   "busybox:1.36",
+				Command: []string{"echo"},
+				Args:    []string{"hello"},
+			}, lateClass)
 
 			By("reconciling again: the Task proceeds to a Job")
 			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
@@ -780,6 +796,40 @@ var _ = Describe("Task Controller", func() {
 
 			var job batchv1.Job
 			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+		})
+	})
+
+	Context("ClusterAgentClass events — mapping back to waiting Tasks", func() {
+		// The suite's direct envtest client cannot serve the custom
+		// .spec.agent.ref field selector — that index lives in the manager's
+		// cache and the suite never runs SetupWithManager. A fake client
+		// carrying the same index exercises tasksForAgentClass's filtering.
+		It("enqueues only non-terminal Tasks that reference the class", func() {
+			completed := newTask("map-done", taskNamespace, withAgentRef("map-agent"))
+			completed.Status.Phase = conveyorv1alpha1.TaskPhaseCompleted
+			pending := newTask("map-pending", taskNamespace, withAgentRef("map-agent"))
+			other := newTask("map-other", taskNamespace, withAgentRef("other-agent"))
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(k8sClient.Scheme()).
+				WithIndex(&conveyorv1alpha1.Task{}, taskAgentRefIndex, func(obj client.Object) []string {
+					// Mirrors the index function registered in SetupWithManager.
+					task := obj.(*conveyorv1alpha1.Task)
+					if task.Spec.Agent.Ref == "" {
+						return nil
+					}
+					return []string{task.Spec.Agent.Ref}
+				}).
+				WithObjects(completed, pending, other).
+				Build()
+			mapper := &TaskReconciler{Client: fakeClient, Scheme: k8sClient.Scheme()}
+
+			reqs := mapper.tasksForAgentClass(ctx, &conveyorv1alpha1.ClusterAgentClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "map-agent"},
+			})
+			Expect(reqs).To(ConsistOf(reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "map-pending", Namespace: taskNamespace},
+			}), "Completed Task and other-class Task must not be enqueued")
 		})
 	})
 })

@@ -8,13 +8,20 @@ you may not use this file except in compliance with the License.
 package policy
 
 import (
-	"fmt"
+	"errors"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 )
+
+// PromptProjection is the volume/mount pair that delivers the Task's
+// prompt into the container. Zero value means the AgentClass does not
+// read a prompt.
+type PromptProjection struct {
+	Volume *corev1.Volume
+	Mount  *corev1.VolumeMount
+}
 
 // PromptKey is the key used inside the owned ConfigMap when the Task's
 // prompt is inline. Kept as a named constant so the controller and any
@@ -24,11 +31,15 @@ const PromptKey = "prompt"
 // PromptVolumeName is the pod-level volume name that carries the prompt.
 const PromptVolumeName = "prompt"
 
+// promptSuffix distinguishes the prompt ConfigMap from the Task's main
+// resource name and the agent-config ConfigMap.
+const promptSuffix = "-prompt"
+
 // InlinePromptConfigMapName returns the name of the owned ConfigMap that
 // holds an inline prompt. Separate from the Task's main resource name so
 // it does not collide with the SA / Role / Job sharing `<task-name>`.
 func InlinePromptConfigMapName(taskName string) string {
-	return taskName + "-prompt"
+	return taskName + promptSuffix
 }
 
 // BuildPromptProjection returns the volume and volume-mount that project
@@ -52,15 +63,14 @@ func BuildPromptProjection(
 	taskName string,
 	prompt conveyorv1alpha1.PromptSource,
 	inputs conveyorv1alpha1.AgentInputs,
-) (*corev1.Volume, *corev1.VolumeMount, error) {
+) (PromptProjection, error) {
 	if inputs.Prompt == nil || inputs.Prompt.Mount == "" {
 		// Env-var delivery is not supported yet; documented in the type.
-		return nil, nil, nil
+		return PromptProjection{}, nil
 	}
 
 	mountPath := inputs.Prompt.Mount
 	vol := &corev1.Volume{Name: PromptVolumeName}
-	readOnly := true
 
 	var subPath string
 	switch {
@@ -93,16 +103,18 @@ func BuildPromptProjection(
 		}
 
 	default:
-		return nil, nil, fmt.Errorf("prompt has no source (inline/secretRef/configMapRef)")
+		return PromptProjection{}, errors.New("prompt has no source (inline/secretRef/configMapRef)")
 	}
 
-	mount := &corev1.VolumeMount{
-		Name:      PromptVolumeName,
-		MountPath: mountPath,
-		SubPath:   subPath,
-		ReadOnly:  readOnly,
-	}
-	return vol, mount, nil
+	return PromptProjection{
+		Volume: vol,
+		Mount: &corev1.VolumeMount{
+			Name:      PromptVolumeName,
+			MountPath: mountPath,
+			SubPath:   subPath,
+			ReadOnly:  true,
+		},
+	}, nil
 }
 
 // BuildInlinePromptConfigMap materialises the owned ConfigMap that holds
@@ -114,11 +126,7 @@ func BuildInlinePromptConfigMap(taskName, namespace string, prompt conveyorv1alp
 		return nil
 	}
 	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      InlinePromptConfigMapName(taskName),
-			Namespace: namespace,
-			Labels:    OwnershipLabels(taskName),
-		},
+		ObjectMeta: ownedMeta(InlinePromptConfigMapName(taskName), namespace, taskName),
 		Data: map[string]string{
 			PromptKey: prompt.Inline,
 		},

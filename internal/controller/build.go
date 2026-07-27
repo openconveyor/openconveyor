@@ -8,6 +8,7 @@ you may not use this file except in compliance with the License.
 package controller
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 
@@ -15,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 	"github.com/openconveyor/openconveyor/internal/policy"
@@ -34,6 +36,10 @@ const (
 	// scratchVolumeName is an emptyDir mounted at /tmp so agents have a
 	// writable path despite readOnlyRootFilesystem.
 	scratchVolumeName = "scratch"
+
+	// agentContainerName is the single container in every Task Job. Part
+	// of the user-facing contract: `kubectl logs <job-pod> -c agent`.
+	agentContainerName = "agent"
 )
 
 // buildServiceAccount returns the Task's dedicated ServiceAccount. Token
@@ -69,22 +75,12 @@ func buildJob(
 	agent *conveyorv1alpha1.ClusterAgentClass,
 	effectiveSecrets []string,
 ) (*batchv1.Job, error) {
-	timeoutSeconds := int64(task.Spec.Resources.Timeout.Seconds())
-	backoffLimit := int32(0)
-	ttl := defaultTTLSeconds
-	runAsNonRoot := true
-	runAsUser := nonRootUID
-	runAsGroup := nonRootUID
-	readOnlyRoot := true
-	allowPrivEsc := false
-	automount := policy.NeedsServiceAccountToken(task.Spec.Permissions.RBAC)
-
 	secretVolumes, secretMounts := policy.BuildSecretVolumes(effectiveSecrets)
-	promptVol, promptMount, err := policy.BuildPromptProjection(task.Name, task.Spec.Prompt, agent.Spec.Inputs)
+	prompt, err := policy.BuildPromptProjection(task.Name, task.Spec.Prompt, agent.Spec.Inputs)
 	if err != nil {
 		return nil, err
 	}
-	configEnv, configVol, configMount, err := policy.BuildConfigProjection(task.Name, task.Spec.Agent.Config, agent.Spec.Inputs)
+	config, err := policy.BuildConfigProjection(task.Name, task.Spec.Agent.Config, agent.Spec.Inputs)
 	if err != nil {
 		return nil, err
 	}
@@ -97,21 +93,21 @@ func buildJob(
 		},
 	})
 	volumes = append(volumes, secretVolumes...)
-	if promptVol != nil {
-		volumes = append(volumes, *promptVol)
+	if prompt.Volume != nil {
+		volumes = append(volumes, *prompt.Volume)
 	}
-	if configVol != nil {
-		volumes = append(volumes, *configVol)
+	if config.Volume != nil {
+		volumes = append(volumes, *config.Volume)
 	}
 
 	mounts := make([]corev1.VolumeMount, 0, 2+len(secretMounts))
 	mounts = append(mounts, corev1.VolumeMount{Name: scratchVolumeName, MountPath: "/tmp"})
 	mounts = append(mounts, secretMounts...)
-	if promptMount != nil {
-		mounts = append(mounts, *promptMount)
+	if prompt.Mount != nil {
+		mounts = append(mounts, *prompt.Mount)
 	}
-	if configMount != nil {
-		mounts = append(mounts, *configMount)
+	if config.Mount != nil {
+		mounts = append(mounts, *config.Mount)
 	}
 
 	resourceReqs, err := buildResourceRequirements(task.Spec.Resources)
@@ -120,19 +116,19 @@ func buildJob(
 	}
 
 	container := corev1.Container{
-		Name:            "agent",
+		Name:            agentContainerName,
 		Image:           agent.Spec.Image,
-		ImagePullPolicy: corev1.PullPolicy(defaultString(agent.Spec.ImagePullPolicy, string(corev1.PullIfNotPresent))),
+		ImagePullPolicy: corev1.PullPolicy(cmp.Or(agent.Spec.ImagePullPolicy, string(corev1.PullIfNotPresent))),
 		Command:         agent.Spec.Command,
 		Args:            agent.Spec.Args,
-		Env:             configEnv,
+		Env:             config.Env,
 		Resources:       resourceReqs,
 		SecurityContext: &corev1.SecurityContext{
-			RunAsNonRoot:             &runAsNonRoot,
-			RunAsUser:                &runAsUser,
-			RunAsGroup:               &runAsGroup,
-			ReadOnlyRootFilesystem:   &readOnlyRoot,
-			AllowPrivilegeEscalation: &allowPrivEsc,
+			RunAsNonRoot:             ptr.To(true),
+			RunAsUser:                ptr.To(nonRootUID),
+			RunAsGroup:               ptr.To(nonRootUID),
+			ReadOnlyRootFilesystem:   ptr.To(true),
+			AllowPrivilegeEscalation: ptr.To(false),
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{"ALL"},
 			},
@@ -150,7 +146,7 @@ func buildJob(
 		Spec: corev1.PodSpec{
 			RestartPolicy:                corev1.RestartPolicyNever,
 			ServiceAccountName:           taskResourceName(task),
-			AutomountServiceAccountToken: &automount,
+			AutomountServiceAccountToken: ptr.To(policy.NeedsServiceAccountToken(task.Spec.Permissions.RBAC)),
 			Containers:                   []corev1.Container{container},
 			Volumes:                      volumes,
 		},
@@ -163,9 +159,9 @@ func buildJob(
 			Labels:    ownershipLabels(task),
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit:            &backoffLimit,
-			ActiveDeadlineSeconds:   &timeoutSeconds,
-			TTLSecondsAfterFinished: &ttl,
+			BackoffLimit:            ptr.To(int32(0)),
+			ActiveDeadlineSeconds:   ptr.To(int64(task.Spec.Resources.Timeout.Seconds())),
+			TTLSecondsAfterFinished: ptr.To(defaultTTLSeconds),
 			Template:                pod,
 		},
 	}, nil
@@ -211,24 +207,16 @@ func taskResourceName(task *conveyorv1alpha1.Task) string {
 // and what the pod advertises.
 func ownershipLabels(task *conveyorv1alpha1.Task) map[string]string {
 	labels := policy.OwnershipLabels(task.Name)
-	labels["app.kubernetes.io/component"] = "task"
+	labels[policy.LabelComponent] = policy.ComponentTask
 	return labels
 }
 
 // podLabels are the labels on the pod template itself. Must include the
 // selector labels used by the Task's NetworkPolicy.
 func podLabels(task *conveyorv1alpha1.Task) map[string]string {
-	labels := policy.OwnershipLabels(task.Name)
-	labels["app.kubernetes.io/component"] = "task"
+	labels := ownershipLabels(task)
 	// PodSelectorLabels is already a subset of OwnershipLabels, but be
 	// explicit in case the policy package splits them in the future.
 	maps.Copy(labels, policy.PodSelectorLabels(task.Name))
 	return labels
-}
-
-func defaultString(s, fallback string) string {
-	if s == "" {
-		return fallback
-	}
-	return s
 }

@@ -9,7 +9,6 @@ package policy
 
 import (
 	rbacv1 "k8s.io/api/rbac/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 )
@@ -38,12 +37,8 @@ func BuildRole(taskName, namespace string, rules []conveyorv1alpha1.RBACRule) *r
 	}
 
 	return &rbacv1.Role{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      taskName,
-			Namespace: namespace,
-			Labels:    OwnershipLabels(taskName),
-		},
-		Rules: policyRules,
+		ObjectMeta: ownedMeta(taskName, namespace, taskName),
+		Rules:      policyRules,
 	}
 }
 
@@ -56,11 +51,7 @@ func BuildRoleBinding(taskName, namespace string, rules []conveyorv1alpha1.RBACR
 	}
 
 	return &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      taskName,
-			Namespace: namespace,
-			Labels:    OwnershipLabels(taskName),
-		},
+		ObjectMeta: ownedMeta(taskName, namespace, taskName),
 		Subjects: []rbacv1.Subject{
 			{
 				Kind:      rbacv1.ServiceAccountKind,

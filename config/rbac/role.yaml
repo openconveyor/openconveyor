@@ -25,6 +25,12 @@ rules:
   - create
   - patch
 - apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+- apiGroups:
   - batch
   resources:
   - jobs
@@ -52,6 +58,7 @@ rules:
   - openconveyor.ai
   resources:
   - clusteragentclasses
+  - clustertriggerclasses
   verbs:
   - get
   - list

@@ -9,7 +9,7 @@ package policy
 
 import (
 	"path"
-	"sort"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -33,12 +33,11 @@ func BuildSecretVolumes(secrets []string) ([]corev1.Volume, []corev1.VolumeMount
 		return nil, nil
 	}
 
-	names := append([]string(nil), secrets...)
-	sort.Strings(names)
+	names := slices.Clone(secrets)
+	slices.Sort(names)
 
 	volumes := make([]corev1.Volume, 0, len(names))
 	mounts := make([]corev1.VolumeMount, 0, len(names))
-	readOnly := true
 
 	for _, name := range names {
 		volName := secretVolumeName(name)
@@ -52,7 +51,7 @@ func BuildSecretVolumes(secrets []string) ([]corev1.Volume, []corev1.VolumeMount
 		})
 		mounts = append(mounts, corev1.VolumeMount{
 			Name:      volName,
-			ReadOnly:  readOnly,
+			ReadOnly:  true,
 			MountPath: path.Join(SecretMountRoot, name),
 		})
 	}

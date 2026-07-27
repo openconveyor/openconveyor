@@ -11,38 +11,64 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
-	"sort"
+	"slices"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 )
-
-// PermanentError marks an egress entry problem that retrying cannot fix:
-// a malformed CIDR or a hostname that authoritatively does not exist
-// (NXDOMAIN). Anything else — resolver timeouts, SERVFAIL, network blips —
-// is left unwrapped so callers retry instead of failing the Task.
-type PermanentError struct {
-	Err error
-}
-
-func (e *PermanentError) Error() string { return e.Err.Error() }
-func (e *PermanentError) Unwrap() error { return e.Err }
 
 // Resolver abstracts DNS lookup so tests can inject fixed results.
 type Resolver interface {
 	LookupHost(ctx context.Context, host string) ([]string, error)
 }
 
+// lookupTimeout bounds a single hostname resolution. Lookups run
+// sequentially inside a reconcile, so without a cap one hung resolver
+// stalls a controller worker for the whole reconcile deadline.
+const lookupTimeout = 5 * time.Second
+
 // DefaultResolver uses the process's default net.Resolver.
 type DefaultResolver struct{}
+
+var _ Resolver = DefaultResolver{}
 
 func (DefaultResolver) LookupHost(ctx context.Context, host string) ([]string, error) {
 	return net.DefaultResolver.LookupHost(ctx, host)
 }
+
+// StaticResolver serves fixed lookup results — the injectable test
+// double for Resolver, shared by this package's tests and the
+// controller's envtest suite. Err, when set, fails every lookup.
+type StaticResolver struct {
+	Hosts map[string][]string
+	Err   error
+}
+
+var _ Resolver = StaticResolver{}
+
+func (s StaticResolver) LookupHost(_ context.Context, host string) ([]string, error) {
+	if s.Err != nil {
+		return nil, s.Err
+	}
+	return s.Hosts[host], nil
+}
+
+// DNS egress target: the stock CoreDNS label set on every mainstream
+// k8s distro, reached on the standard DNS port.
+const (
+	dnsPort              = 53
+	kubeSystemNamespace  = "kube-system"
+	namespaceNameLabel   = "kubernetes.io/metadata.name"
+	kubeDNSSelectorKey   = "k8s-app"
+	kubeDNSSelectorValue = "kube-dns"
+)
 
 // BuildNetworkPolicy produces a NetworkPolicy that applies default-deny
 // to the Task's pod. The policy is always emitted (never nil) so every
@@ -85,11 +111,7 @@ func BuildNetworkPolicy(
 	}
 
 	return &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      taskName,
-			Namespace: namespace,
-			Labels:    OwnershipLabels(taskName),
-		},
+		ObjectMeta: ownedMeta(taskName, namespace, taskName),
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: PodSelectorLabels(taskName)},
 			PolicyTypes: []networkingv1.PolicyType{
@@ -132,7 +154,7 @@ func resolveEgress(ctx context.Context, resolver Resolver, egress []string) ([]s
 			continue
 		}
 
-		addrs, err := resolver.LookupHost(ctx, entry)
+		addrs, err := lookupWithTimeout(ctx, resolver, entry)
 		if err != nil {
 			wrapped := fmt.Errorf("egress entry %q: lookup failed: %w", entry, err)
 			var dnsErr *net.DNSError
@@ -148,12 +170,15 @@ func resolveEgress(ctx context.Context, resolver Resolver, egress []string) ([]s
 		}
 	}
 
-	out := make([]string, 0, len(set))
-	for c := range set {
-		out = append(out, c)
-	}
-	sort.Strings(out)
-	return out, nil
+	return slices.Sorted(maps.Keys(set)), nil
+}
+
+// lookupWithTimeout resolves one host under lookupTimeout. Timeouts are
+// transient by design (no PermanentError) so callers back off and retry.
+func lookupWithTimeout(ctx context.Context, resolver Resolver, host string) ([]string, error) {
+	lctx, cancel := context.WithTimeout(ctx, lookupTimeout)
+	defer cancel()
+	return resolver.LookupHost(lctx, host)
 }
 
 func ipToCIDR(ip net.IP) string {
@@ -177,23 +202,21 @@ func toIPBlocks(cidrs []string) []networkingv1.NetworkPolicyPeer {
 // kube-system — the stock CoreDNS label set on every mainstream k8s distro.
 // Without this rule the pod cannot resolve the names the user listed.
 func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
-	udp := corev1.ProtocolUDP
-	tcp := corev1.ProtocolTCP
-	port53 := intstr.FromInt(53)
+	port := ptr.To(intstr.FromInt32(dnsPort))
 	return networkingv1.NetworkPolicyEgressRule{
 		To: []networkingv1.NetworkPolicyPeer{
 			{
 				NamespaceSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"},
+					MatchLabels: map[string]string{namespaceNameLabel: kubeSystemNamespace},
 				},
 				PodSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{"k8s-app": "kube-dns"},
+					MatchLabels: map[string]string{kubeDNSSelectorKey: kubeDNSSelectorValue},
 				},
 			},
 		},
 		Ports: []networkingv1.NetworkPolicyPort{
-			{Protocol: &udp, Port: &port53},
-			{Protocol: &tcp, Port: &port53},
+			{Protocol: ptr.To(corev1.ProtocolUDP), Port: port},
+			{Protocol: ptr.To(corev1.ProtocolTCP), Port: port},
 		},
 	}
 }

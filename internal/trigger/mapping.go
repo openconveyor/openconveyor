@@ -10,15 +10,20 @@ package trigger
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/tidwall/gjson"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 )
+
+// defaultGenerateNamePrefix mirrors the CRD default for
+// spec.task.generateNamePrefix (clustertriggerclass_types.go) so Tasks
+// built from templates that predate the default still get a prefix.
+const defaultGenerateNamePrefix = "task-"
 
 // ApplyFilters returns true when every filter matches the body. Filters
 // are ANDed; a zero-length slice matches everything. Matching compares
@@ -54,7 +59,7 @@ func BuildTask(tmpl conveyorv1alpha1.TaskTemplate, body []byte) (*conveyorv1alph
 
 	prefix := tmpl.GenerateNamePrefix
 	if prefix == "" {
-		prefix = "task-"
+		prefix = defaultGenerateNamePrefix
 	}
 	task.GenerateName = prefix
 
@@ -77,7 +82,7 @@ func BuildTask(tmpl conveyorv1alpha1.TaskTemplate, body []byte) (*conveyorv1alph
 	// validation fire after the 200 response.
 	p := task.Spec.Prompt
 	if p.Inline == "" && p.SecretRef == nil && p.ConfigMapRef == nil {
-		return nil, fmt.Errorf("webhook produced a Task with no prompt — add a \"prompt\" mapping or a default")
+		return nil, errors.New(`webhook produced a Task with no prompt — add a "prompt" mapping or a default`)
 	}
 
 	return task, nil
@@ -109,9 +114,9 @@ func applyMapping(task *conveyorv1alpha1.Task, to, value string) error {
 		task.Name = value
 		task.GenerateName = ""
 	case strings.HasPrefix(to, "labels."):
-		setMetaString(&task.ObjectMeta, "labels", strings.TrimPrefix(to, "labels."), value)
+		setMapKey(&task.Labels, strings.TrimPrefix(to, "labels."), value)
 	case strings.HasPrefix(to, "annotations."):
-		setMetaString(&task.ObjectMeta, "annotations", strings.TrimPrefix(to, "annotations."), value)
+		setMapKey(&task.Annotations, strings.TrimPrefix(to, "annotations."), value)
 	case strings.HasPrefix(to, "config."):
 		return setConfigKey(&task.Spec.Agent, strings.TrimPrefix(to, "config."), value)
 	default:
@@ -125,7 +130,7 @@ func applyMapping(task *conveyorv1alpha1.Task, to, value string) error {
 // override template values on key collision.
 func setConfigKey(agent *conveyorv1alpha1.AgentRef, key, value string) error {
 	if key == "" {
-		return fmt.Errorf("config mapping needs a key, e.g. \"config.TARGET_REPO\"")
+		return errors.New(`config mapping needs a key, e.g. "config.TARGET_REPO"`)
 	}
 	fields := map[string]any{}
 	if agent.Config != nil && len(agent.Config.Raw) > 0 {
@@ -144,17 +149,9 @@ func setConfigKey(agent *conveyorv1alpha1.AgentRef, key, value string) error {
 	return nil
 }
 
-func setMetaString(meta *metav1.ObjectMeta, kind, key, value string) {
-	switch kind {
-	case "labels":
-		if meta.Labels == nil {
-			meta.Labels = map[string]string{}
-		}
-		meta.Labels[key] = value
-	case "annotations":
-		if meta.Annotations == nil {
-			meta.Annotations = map[string]string{}
-		}
-		meta.Annotations[key] = value
+func setMapKey(m *map[string]string, key, value string) {
+	if *m == nil {
+		*m = map[string]string{}
 	}
+	(*m)[key] = value
 }

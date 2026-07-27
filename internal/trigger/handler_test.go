@@ -43,7 +43,12 @@ func newFakeClient(t *testing.T, initial ...client.Object) client.Client {
 }
 
 func newHandler(c client.Client) *Handler {
-	return &Handler{Client: c, Namespace: adapterNamespace, Log: logr.Discard()}
+	return &Handler{
+		Client:               c,
+		SecretNamespace:      adapterNamespace,
+		DefaultTaskNamespace: adapterNamespace,
+		Log:                  logr.Discard(),
+	}
 }
 
 // githubTriggerClass returns a realistic ClusterTriggerClass for a GitHub
@@ -256,6 +261,11 @@ func TestHandler_AmbiguousPath(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 for ambiguous path", rec.Code)
 	}
+	// Pre-authentication failure: the response must not leak internal
+	// detail such as ClusterTriggerClass names or counts.
+	if got := rec.Body.String(); strings.Contains(got, "ClusterTriggerClass") {
+		t.Errorf("response leaks internal detail: %s", got)
+	}
 }
 
 func TestHandler_IncompleteSecretRef(t *testing.T) {
@@ -270,6 +280,25 @@ func TestHandler_IncompleteSecretRef(t *testing.T) {
 	h.ServeHTTP(rec, post(t, "/github", body, "sha256=abc"))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 for incomplete secretRef", rec.Code)
+	}
+}
+
+func TestHandler_EmptySecretIs500(t *testing.T) {
+	// An empty signing secret is the operator's misconfiguration, not a
+	// caller auth failure — must be 500, not 401.
+	ctc := githubTriggerClass()
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "github-webhook", Namespace: adapterNamespace},
+		Data:       map[string][]byte{"secret": {}},
+	}
+	c := newFakeClient(t, ctc, secret)
+	h := newHandler(c)
+
+	body := []byte(`{"action":"opened","issue":{"title":"x"}}`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, post(t, "/github", body, "sha256=abc"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for empty signing secret", rec.Code)
 	}
 }
 

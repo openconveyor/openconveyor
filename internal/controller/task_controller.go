@@ -9,7 +9,6 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -17,13 +16,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -36,17 +33,6 @@ import (
 )
 
 const (
-	conditionReady = "Ready"
-
-	reasonAgentClassMissing = "AgentClassMissing"
-	reasonInvalidSpec       = "InvalidSpec"
-	reasonPending           = "Pending"
-	reasonRunning           = "Running"
-	reasonCompleted         = "Completed"
-	reasonFailed            = "Failed"
-	reasonTimedOut          = "TimedOut"
-	reasonEgressResolveFail = "EgressResolveFailed"
-
 	// taskAgentRefIndex indexes Tasks by spec.agent.ref so the
 	// ClusterAgentClass watch can find the Tasks that reference it.
 	taskAgentRefIndex = ".spec.agent.ref"
@@ -62,6 +48,8 @@ type TaskReconciler struct {
 	Scheme   *runtime.Scheme
 	Resolver policy.Resolver
 }
+
+var _ reconcile.Reconciler = (*TaskReconciler)(nil)
 
 // +kubebuilder:rbac:groups=openconveyor.ai,resources=tasks,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=openconveyor.ai,resources=tasks/status,verbs=get;update;patch
@@ -80,8 +68,6 @@ type TaskReconciler struct {
 // place when the pod starts, the CNI default-allow window lets an agent
 // escape its egress allowlist for the first few hundred milliseconds.
 func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
-
 	var task conveyorv1alpha1.Task
 	if err := r.Get(ctx, req.NamespacedName, &task); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -96,7 +82,7 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	if err := validateTask(&task); err != nil {
 		metrics.ObserveReconcileError(metrics.StepValidate)
-		return ctrl.Result{}, r.markInvalid(ctx, &task, reasonInvalidSpec, err.Error())
+		return ctrl.Result{}, r.failTask(ctx, &task, reasonInvalidSpec, err)
 	}
 
 	var agent conveyorv1alpha1.ClusterAgentClass
@@ -117,44 +103,41 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	if err := r.ensureServiceAccount(ctx, &task); err != nil {
-		metrics.ObserveReconcileError(metrics.StepServiceAccount)
-		return ctrl.Result{}, fmt.Errorf("ensure service account: %w", err)
-	}
-
-	if err := r.ensureRole(ctx, &task); err != nil {
-		metrics.ObserveReconcileError(metrics.StepRole)
-		return ctrl.Result{}, fmt.Errorf("ensure role: %w", err)
-	}
-
-	if err := r.ensureRoleBinding(ctx, &task); err != nil {
-		metrics.ObserveReconcileError(metrics.StepRoleBinding)
-		return ctrl.Result{}, fmt.Errorf("ensure rolebinding: %w", err)
-	}
-
 	effectiveEgress := policy.MergeStringSets(task.Spec.Permissions.Egress, agent.Spec.Requires.Egress)
 	effectiveSecrets := policy.MergeStringSets(task.Spec.Permissions.Secrets, agent.Spec.Requires.Secrets)
 
-	if err := r.ensureNetworkPolicy(ctx, &task, effectiveEgress); err != nil {
-		metrics.ObserveReconcileError(metrics.StepNetworkPolicy)
-		// Only unfixable egress entries (bad CIDR, NXDOMAIN) fail the Task.
-		// Transient resolver or API errors are returned so controller-runtime
-		// requeues with backoff instead of wedging the Task in Failed.
-		var perm *policy.PermanentError
-		if errors.As(err, &perm) {
-			return ctrl.Result{}, r.markInvalid(ctx, &task, reasonEgressResolveFail, err.Error())
+	// A step with a non-empty invalidReason may surface a PermanentError
+	// (bad CIDR, NXDOMAIN) that fails the Task; every other error is
+	// wrapped and returned so controller-runtime requeues with backoff
+	// instead of wedging the Task in Failed. Order matters: the
+	// NetworkPolicy must exist before the Job (ADR-0005).
+	steps := []struct {
+		metricsStep   string
+		wrap          string
+		invalidReason string
+		run           func(context.Context) error
+	}{
+		{metrics.StepServiceAccount, "ensure service account", "",
+			func(ctx context.Context) error { return r.ensureServiceAccount(ctx, &task) }},
+		{metrics.StepRole, "ensure role", "",
+			func(ctx context.Context) error { return r.ensureRole(ctx, &task) }},
+		{metrics.StepRoleBinding, "ensure rolebinding", "",
+			func(ctx context.Context) error { return r.ensureRoleBinding(ctx, &task) }},
+		{metrics.StepNetworkPolicy, "ensure network policy", reasonEgressResolveFail,
+			func(ctx context.Context) error { return r.ensureNetworkPolicy(ctx, &task, effectiveEgress) }},
+		{metrics.StepPromptConfigMap, "ensure prompt configmap", "",
+			func(ctx context.Context) error { return r.ensurePromptConfigMap(ctx, &task) }},
+		{metrics.StepAgentConfigMap, "ensure config configmap", "",
+			func(ctx context.Context) error { return r.ensureAgentConfigMap(ctx, &task, &agent) }},
+	}
+	for _, step := range steps {
+		if err := step.run(ctx); err != nil {
+			metrics.ObserveReconcileError(step.metricsStep)
+			if step.invalidReason != "" && policy.IsPermanent(err) {
+				return ctrl.Result{}, r.failTask(ctx, &task, step.invalidReason, err)
+			}
+			return ctrl.Result{}, fmt.Errorf("%s: %w", step.wrap, err)
 		}
-		return ctrl.Result{}, fmt.Errorf("ensure network policy: %w", err)
-	}
-
-	if err := r.ensurePromptConfigMap(ctx, &task); err != nil {
-		metrics.ObserveReconcileError(metrics.StepPromptConfigMap)
-		return ctrl.Result{}, fmt.Errorf("ensure prompt configmap: %w", err)
-	}
-
-	if err := r.ensureConfigConfigMap(ctx, &task, &agent); err != nil {
-		metrics.ObserveReconcileError(metrics.StepConfigConfigMap)
-		return ctrl.Result{}, fmt.Errorf("ensure config configmap: %w", err)
 	}
 
 	job, err := r.ensureJob(ctx, &task, &agent, effectiveSecrets)
@@ -163,125 +146,84 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		// Config that can never be projected (malformed JSON, field with no
 		// delivery path) is a spec problem — fail the Task instead of
 		// requeueing forever.
-		var perm *policy.PermanentError
-		if errors.As(err, &perm) {
-			return ctrl.Result{}, r.markInvalid(ctx, &task, reasonInvalidSpec, err.Error())
+		if policy.IsPermanent(err) {
+			return ctrl.Result{}, r.failTask(ctx, &task, reasonInvalidSpec, err)
 		}
 		return ctrl.Result{}, fmt.Errorf("ensure job: %w", err)
 	}
 
 	if err := r.syncStatus(ctx, &task, job); err != nil {
 		metrics.ObserveReconcileError(metrics.StepStatus)
-		log.Error(err, "Failed to update Task status")
 		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func validateTask(task *conveyorv1alpha1.Task) error {
-	if task.Spec.Resources.Timeout.Duration <= 0 {
-		return fmt.Errorf("spec.resources.timeout must be > 0")
-	}
-	if task.Spec.Agent.Ref == "" {
-		return fmt.Errorf("spec.agent.ref is required")
-	}
-	p := task.Spec.Prompt
-	sources := 0
-	if p.Inline != "" {
-		sources++
-	}
-	if p.SecretRef != nil {
-		sources++
-	}
-	if p.ConfigMapRef != nil {
-		sources++
-	}
-	if sources != 1 {
-		return fmt.Errorf("spec.prompt requires exactly one of inline/secretRef/configMapRef")
-	}
-	if r := task.Spec.Resources; r.CPU != "" {
-		if _, err := resource.ParseQuantity(r.CPU); err != nil {
-			return fmt.Errorf("spec.resources.cpu: %w", err)
-		}
-	}
-	if r := task.Spec.Resources; r.Memory != "" {
-		if _, err := resource.ParseQuantity(r.Memory); err != nil {
-			return fmt.Errorf("spec.resources.memory: %w", err)
-		}
-	}
-	return nil
-}
-
-func (r *TaskReconciler) ensureServiceAccount(ctx context.Context, task *conveyorv1alpha1.Task) error {
-	desired := buildServiceAccount(task)
+// ensureOwned upserts one owned resource: set the controller reference,
+// create when absent, otherwise copy the reconcilable fields onto the
+// live object and update. Labels always sync; mutate (optional) copies
+// the type-specific mutable fields. The update is skipped when nothing
+// changed — every Job status flip triggers a full reconcile, and
+// unconditional writes would churn resourceVersions on all owned
+// resources each time.
+func ensureOwned[T client.Object](
+	ctx context.Context,
+	r *TaskReconciler,
+	task *conveyorv1alpha1.Task,
+	desired, existing T,
+	mutate func(existing, desired T),
+) error {
 	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
 		return err
 	}
 
-	var existing corev1.ServiceAccount
-	err := r.Get(ctx, client.ObjectKeyFromObject(desired), &existing)
+	err := r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
 	switch {
 	case apierrors.IsNotFound(err):
 		return r.Create(ctx, desired)
 	case err != nil:
 		return err
 	}
-	return nil
+	before := existing.DeepCopyObject()
+	if mutate != nil {
+		mutate(existing, desired)
+	}
+	existing.SetLabels(desired.GetLabels())
+	if apiequality.Semantic.DeepEqual(before, existing) {
+		return nil
+	}
+	return r.Update(ctx, existing)
+}
+
+func (r *TaskReconciler) ensureServiceAccount(ctx context.Context, task *conveyorv1alpha1.Task) error {
+	return ensureOwned(ctx, r, task, buildServiceAccount(task), &corev1.ServiceAccount{}, nil)
 }
 
 // ensureRole materializes (or tears down) the namespaced Role for this
 // Task. No RBAC declared → delete any stray Role. Otherwise upsert.
 func (r *TaskReconciler) ensureRole(ctx context.Context, task *conveyorv1alpha1.Task) error {
 	desired := policy.BuildRole(task.Name, task.Namespace, task.Spec.Permissions.RBAC)
-	key := types.NamespacedName{Name: taskResourceName(task), Namespace: task.Namespace}
-
 	if desired == nil {
+		key := types.NamespacedName{Name: taskResourceName(task), Namespace: task.Namespace}
 		return r.deleteIfExists(ctx, key, &rbacv1.Role{})
 	}
-
-	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
-		return err
-	}
-
-	var existing rbacv1.Role
-	err := r.Get(ctx, key, &existing)
-	switch {
-	case apierrors.IsNotFound(err):
-		return r.Create(ctx, desired)
-	case err != nil:
-		return err
-	}
-	existing.Rules = desired.Rules
-	existing.Labels = desired.Labels
-	return r.Update(ctx, &existing)
+	return ensureOwned(ctx, r, task, desired, &rbacv1.Role{}, func(existing, desired *rbacv1.Role) {
+		existing.Rules = desired.Rules
+	})
 }
 
 func (r *TaskReconciler) ensureRoleBinding(ctx context.Context, task *conveyorv1alpha1.Task) error {
 	desired := policy.BuildRoleBinding(task.Name, task.Namespace, task.Spec.Permissions.RBAC)
-	key := types.NamespacedName{Name: taskResourceName(task), Namespace: task.Namespace}
-
 	if desired == nil {
+		key := types.NamespacedName{Name: taskResourceName(task), Namespace: task.Namespace}
 		return r.deleteIfExists(ctx, key, &rbacv1.RoleBinding{})
 	}
-
-	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
-		return err
-	}
-
-	var existing rbacv1.RoleBinding
-	err := r.Get(ctx, key, &existing)
-	switch {
-	case apierrors.IsNotFound(err):
-		return r.Create(ctx, desired)
-	case err != nil:
-		return err
-	}
-	// RoleRef is immutable per K8s — if it drifted somehow, only Subjects
-	// and metadata can be patched. Leaving RoleRef untouched here.
-	existing.Subjects = desired.Subjects
-	existing.Labels = desired.Labels
-	return r.Update(ctx, &existing)
+	return ensureOwned(ctx, r, task, desired, &rbacv1.RoleBinding{}, func(existing, desired *rbacv1.RoleBinding) {
+		// RoleRef is immutable per K8s — if it drifted somehow, only Subjects
+		// and metadata can be patched. Leaving RoleRef untouched here.
+		existing.Subjects = desired.Subjects
+	})
 }
 
 // ensureNetworkPolicy resolves the Task's egress allowlist to CIDRs and
@@ -291,6 +233,8 @@ func (r *TaskReconciler) ensureRoleBinding(ctx context.Context, task *conveyorv1
 func (r *TaskReconciler) ensureNetworkPolicy(ctx context.Context, task *conveyorv1alpha1.Task, egress []string) error {
 	resolver := r.Resolver
 	if resolver == nil {
+		// SetupWithManager defaults this; the fallback covers reconcilers
+		// constructed directly (tests driving Reconcile by hand).
 		resolver = policy.DefaultResolver{}
 	}
 
@@ -298,21 +242,10 @@ func (r *TaskReconciler) ensureNetworkPolicy(ctx context.Context, task *conveyor
 	if err != nil {
 		return err
 	}
-	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
-		return err
-	}
-
-	var existing networkingv1.NetworkPolicy
-	getErr := r.Get(ctx, client.ObjectKeyFromObject(desired), &existing)
-	switch {
-	case apierrors.IsNotFound(getErr):
-		return r.Create(ctx, desired)
-	case getErr != nil:
-		return getErr
-	}
-	existing.Spec = desired.Spec
-	existing.Labels = desired.Labels
-	return r.Update(ctx, &existing)
+	return ensureOwned(ctx, r, task, desired, &networkingv1.NetworkPolicy{},
+		func(existing, desired *networkingv1.NetworkPolicy) {
+			existing.Spec = desired.Spec
+		})
 }
 
 func (r *TaskReconciler) ensureJob(
@@ -360,58 +293,32 @@ func (r *TaskReconciler) ensurePromptConfigMap(ctx context.Context, task *convey
 	if desired == nil {
 		return r.deleteIfExists(ctx, key, &corev1.ConfigMap{})
 	}
-
-	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
-		return err
-	}
-
-	var existing corev1.ConfigMap
-	err := r.Get(ctx, key, &existing)
-	switch {
-	case apierrors.IsNotFound(err):
-		return r.Create(ctx, desired)
-	case err != nil:
-		return err
-	}
-	existing.Data = desired.Data
-	existing.Labels = desired.Labels
-	return r.Update(ctx, &existing)
+	return ensureOwned(ctx, r, task, desired, &corev1.ConfigMap{}, func(existing, desired *corev1.ConfigMap) {
+		existing.Data = desired.Data
+	})
 }
 
-// ensureConfigConfigMap owns the ConfigMap that carries spec.agent.config
+// ensureAgentConfigMap owns the ConfigMap that carries spec.agent.config
 // for agents that declare a config mount. Upserted when needed, deleted
 // when the Task has no config (or the agent no longer mounts it) so stale
 // content does not linger.
-func (r *TaskReconciler) ensureConfigConfigMap(
+func (r *TaskReconciler) ensureAgentConfigMap(
 	ctx context.Context,
 	task *conveyorv1alpha1.Task,
 	agent *conveyorv1alpha1.ClusterAgentClass,
 ) error {
 	key := types.NamespacedName{
-		Name:      policy.ConfigConfigMapName(task.Name),
+		Name:      policy.AgentConfigMapName(task.Name),
 		Namespace: task.Namespace,
 	}
 
-	desired := policy.BuildConfigConfigMap(task.Name, task.Namespace, task.Spec.Agent.Config, agent.Spec.Inputs)
+	desired := policy.BuildAgentConfigMap(task.Name, task.Namespace, task.Spec.Agent.Config, agent.Spec.Inputs)
 	if desired == nil {
 		return r.deleteIfExists(ctx, key, &corev1.ConfigMap{})
 	}
-
-	if err := controllerutil.SetControllerReference(task, desired, r.Scheme); err != nil {
-		return err
-	}
-
-	var existing corev1.ConfigMap
-	err := r.Get(ctx, key, &existing)
-	switch {
-	case apierrors.IsNotFound(err):
-		return r.Create(ctx, desired)
-	case err != nil:
-		return err
-	}
-	existing.Data = desired.Data
-	existing.Labels = desired.Labels
-	return r.Update(ctx, &existing)
+	return ensureOwned(ctx, r, task, desired, &corev1.ConfigMap{}, func(existing, desired *corev1.ConfigMap) {
+		existing.Data = desired.Data
+	})
 }
 
 func (r *TaskReconciler) deleteIfExists(ctx context.Context, key types.NamespacedName, obj client.Object) error {
@@ -421,174 +328,6 @@ func (r *TaskReconciler) deleteIfExists(ctx context.Context, key types.Namespace
 		return err
 	}
 	return nil
-}
-
-func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.Task, job *batchv1.Job) error {
-	log := logf.FromContext(ctx)
-	before := task.Status.DeepCopy()
-
-	task.Status.JobName = job.Name
-	task.Status.StartTime = job.Status.StartTime
-	task.Status.CompletionTime = job.Status.CompletionTime
-	task.Status.ObservedGeneration = task.Generation
-
-	phase, reason, msg := derivePhase(job)
-	task.Status.Phase = phase
-
-	cond := metav1.Condition{
-		Type:               conditionReady,
-		Status:             conditionStatusFor(phase),
-		Reason:             reason,
-		Message:            msg,
-		ObservedGeneration: task.Generation,
-		LastTransitionTime: metav1.Now(),
-	}
-	setCondition(&task.Status.Conditions, cond)
-
-	if equalStatus(before, &task.Status) {
-		return nil
-	}
-
-	if before.Phase != phase {
-		log.Info("Task phase transitioned", "from", before.Phase, "to", phase, "reason", reason)
-		metrics.ObservePhaseTransition(string(phase), reason)
-		if isTerminal(phase) && task.Status.StartTime != nil && task.Status.CompletionTime != nil {
-			dur := task.Status.CompletionTime.Sub(task.Status.StartTime.Time).Seconds()
-			metrics.ObserveTaskDuration(string(phase), dur)
-		}
-	}
-
-	return r.Status().Update(ctx, task)
-}
-
-func isTerminal(phase conveyorv1alpha1.TaskPhase) bool {
-	switch phase {
-	case conveyorv1alpha1.TaskPhaseCompleted,
-		conveyorv1alpha1.TaskPhaseFailed,
-		conveyorv1alpha1.TaskPhaseTimedOut:
-		return true
-	}
-	return false
-}
-
-func derivePhase(job *batchv1.Job) (conveyorv1alpha1.TaskPhase, string, string) {
-	for _, c := range job.Status.Conditions {
-		if c.Status != corev1.ConditionTrue {
-			continue
-		}
-		switch c.Type {
-		case batchv1.JobComplete, batchv1.JobSuccessCriteriaMet:
-			return conveyorv1alpha1.TaskPhaseCompleted, reasonCompleted, c.Message
-		case batchv1.JobFailed:
-			if c.Reason == "DeadlineExceeded" {
-				return conveyorv1alpha1.TaskPhaseTimedOut, reasonTimedOut, c.Message
-			}
-			return conveyorv1alpha1.TaskPhaseFailed, reasonFailed, c.Message
-		}
-	}
-	if job.Status.Active > 0 || job.Status.StartTime != nil {
-		return conveyorv1alpha1.TaskPhaseRunning, reasonRunning, "Job is running"
-	}
-	return conveyorv1alpha1.TaskPhasePending, reasonPending, "Waiting for pod to start"
-}
-
-func conditionStatusFor(phase conveyorv1alpha1.TaskPhase) metav1.ConditionStatus {
-	switch phase {
-	case conveyorv1alpha1.TaskPhaseCompleted:
-		return metav1.ConditionTrue
-	case conveyorv1alpha1.TaskPhaseFailed, conveyorv1alpha1.TaskPhaseTimedOut:
-		return metav1.ConditionFalse
-	default:
-		return metav1.ConditionUnknown
-	}
-}
-
-func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1.Task, reason, msg string) error {
-	prevPhase := task.Status.Phase
-	task.Status.Phase = conveyorv1alpha1.TaskPhaseFailed
-	task.Status.ObservedGeneration = task.Generation
-	setCondition(&task.Status.Conditions, metav1.Condition{
-		Type:               conditionReady,
-		Status:             metav1.ConditionFalse,
-		Reason:             reason,
-		Message:            msg,
-		ObservedGeneration: task.Generation,
-		LastTransitionTime: metav1.Now(),
-	})
-	if prevPhase != conveyorv1alpha1.TaskPhaseFailed {
-		metrics.ObservePhaseTransition(string(conveyorv1alpha1.TaskPhaseFailed), reason)
-	}
-	return r.Status().Update(ctx, task)
-}
-
-// markWaitingForAgentClass records that the Task is waiting for its
-// ClusterAgentClass to be created. Unlike markInvalid this keeps the
-// Task in Pending so it picks up where it left off once the class
-// exists. The status update is skipped when nothing changed so the
-// periodic requeue doesn't spam the API server.
-func (r *TaskReconciler) markWaitingForAgentClass(ctx context.Context, task *conveyorv1alpha1.Task) error {
-	before := task.Status.DeepCopy()
-	task.Status.Phase = conveyorv1alpha1.TaskPhasePending
-	task.Status.ObservedGeneration = task.Generation
-	setCondition(&task.Status.Conditions, metav1.Condition{
-		Type:               conditionReady,
-		Status:             metav1.ConditionUnknown,
-		Reason:             reasonAgentClassMissing,
-		Message:            fmt.Sprintf("Waiting for ClusterAgentClass %q to be created", task.Spec.Agent.Ref),
-		ObservedGeneration: task.Generation,
-		LastTransitionTime: metav1.Now(),
-	})
-	if equalStatus(before, &task.Status) {
-		return nil
-	}
-	return r.Status().Update(ctx, task)
-}
-
-func setCondition(conds *[]metav1.Condition, new metav1.Condition) {
-	for i, c := range *conds {
-		if c.Type != new.Type {
-			continue
-		}
-		if c.Status == new.Status && c.Reason == new.Reason && c.Message == new.Message {
-			return // no-op; keep original LastTransitionTime
-		}
-		(*conds)[i] = new
-		return
-	}
-	*conds = append(*conds, new)
-}
-
-func equalStatus(a, b *conveyorv1alpha1.TaskStatus) bool {
-	if a.Phase != b.Phase || a.JobName != b.JobName {
-		return false
-	}
-	if a.ObservedGeneration != b.ObservedGeneration {
-		return false
-	}
-	if !timesEqual(a.StartTime, b.StartTime) || !timesEqual(a.CompletionTime, b.CompletionTime) {
-		return false
-	}
-	if len(a.Conditions) != len(b.Conditions) {
-		return false
-	}
-	for i := range a.Conditions {
-		ac, bc := a.Conditions[i], b.Conditions[i]
-		if ac.Type != bc.Type || ac.Status != bc.Status || ac.Reason != bc.Reason || ac.Message != bc.Message {
-			return false
-		}
-	}
-	return true
-}
-
-func timesEqual(a, b *metav1.Time) bool {
-	switch {
-	case a == nil && b == nil:
-		return true
-	case a == nil || b == nil:
-		return false
-	default:
-		return a.Equal(b)
-	}
 }
 
 // tasksForAgentClass maps a ClusterAgentClass event to the non-terminal
@@ -612,8 +351,12 @@ func (r *TaskReconciler) tasksForAgentClass(ctx context.Context, obj client.Obje
 
 // SetupWithManager wires the reconciler up to watch Tasks, owned Jobs,
 // and the ClusterAgentClasses that Tasks reference.
-func (r *TaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &conveyorv1alpha1.Task{}, taskAgentRefIndex,
+func (r *TaskReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+	if r.Resolver == nil {
+		r.Resolver = policy.DefaultResolver{}
+	}
+
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &conveyorv1alpha1.Task{}, taskAgentRefIndex,
 		func(obj client.Object) []string {
 			task := obj.(*conveyorv1alpha1.Task)
 			if task.Spec.Agent.Ref == "" {
@@ -626,7 +369,7 @@ func (r *TaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&conveyorv1alpha1.Task{}).
-		Owns(&batchv1.Job{}, builder.WithPredicates()).
+		Owns(&batchv1.Job{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&rbacv1.Role{}).
