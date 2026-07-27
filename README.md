@@ -87,15 +87,16 @@ gets garbage-collected with it.
 
 ## Quick start
 
-Requirements: `kubectl`, a Kubernetes cluster (k3s / kind / EKS / anything).
+Requirements: `kubectl`, a Kubernetes 1.29+ cluster (k3s / kind / EKS /
+anything — 1.29 is needed for the CEL admission validation on the CRDs).
 
 ```sh
-# 1. Install CRDs + controller. Pulls the v0.1.0 multi-arch image
+# 1. Install CRDs + controller. Pulls the v0.2.0 multi-arch image
 #    (linux/amd64 + linux/arm64) from ghcr.io/openconveyor/conveyor.
-kubectl apply -f https://github.com/openconveyor/openconveyor/releases/download/v0.1.0/install.yaml
+kubectl apply -f https://github.com/openconveyor/openconveyor/releases/download/v0.2.0/install.yaml
 
 # 2. Apply the sample AgentClass + a Task.
-kubectl apply -k https://github.com/openconveyor/openconveyor//config/samples?ref=v0.1.0
+kubectl apply -k https://github.com/openconveyor/openconveyor//config/samples?ref=v0.2.0
 kubectl get tasks -w
 ```
 
@@ -218,22 +219,24 @@ OpenConveyor is in alpha and moving fast. The next milestones:
   reconcile errors, task duration, webhook request outcomes),
   structured K8s-style logs, Task `status.observedGeneration` and
   start/complete print columns.
-- ⏳ **Phase 9** — v0.1.0 release (GitHub-only scope).
+- ✅ **Phase 9** — v0.1.0 release (GitHub-only scope).
+- ✅ **v0.2.0** — Helm chart distribution, CEL admission validation,
+  `AgentRef.config` projection into the pod.
 
-**Post-v0.1.0:**
+**Next up:**
 
 - `conveyor-git` helper unifying GitHub / GitLab / Forgejo CLIs
   inside reference agents.
 - GitLab / Forgejo examples proving git-host pluggability.
-- `AgentRef.config` projection into the pod (multi-agent support
-  for Gemini, Codex, etc.).
+- Multi-agent reference images (Gemini, Codex, etc.) on top of the
+  config projection shipped in v0.2.0.
 
 ## Status
 
-**Alpha.** Phases 0–8 of the roadmap are live; the security baseline
+**Alpha.** v0.2.0 is the current release; the security baseline
 and trigger adapter are covered by unit and `envtest` integration
 tests, and the controller exposes custom Prometheus metrics on the
-manager's `/metrics` endpoint. APIs may still change before v0.1.0.
+manager's `/metrics` endpoint. APIs may still change before v1.0.
 No production users yet — this is pre-1.0 by design.
 
 ## Community
