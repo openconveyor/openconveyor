@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **e2e:** the suite no longer installs and removes cert-manager, which the
+  controller does not use (about 30 s saved per run). The kind cluster is
+  created from a pinned node image, `KIND_NODE_IMAGE` in the Makefile
+  (default `kindest/node:v1.36.4`, bumped with the k8s deps), so local and
+  CI runs test the same Kubernetes version; CI moves to kind v0.33.0.
+  (#37)
+
 ## [0.2.1] — 2026-10-25
 
 Toolchain and dependency release. No behaviour change; same CRDs,

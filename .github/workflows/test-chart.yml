@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  KIND_VERSION: v0.32.0
+  KIND_VERSION: v0.33.0
 
 jobs:
   test-e2e:
@@ -36,7 +36,7 @@ jobs:
         run: kind version
 
       - name: Create kind cluster
-        run: kind create cluster
+        run: make setup-test-e2e KIND_CLUSTER=kind
 
       - name: Prepare conveyor
         run: |
