@@ -10,6 +10,7 @@ package controller
 import (
 	"context"
 	"net"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -759,6 +760,72 @@ var _ = Describe("Task Controller", func() {
 			Entry("malformed memory quantity",
 				func(t *conveyorv1alpha1.Task) { t.Spec.Resources.Memory = "10Gigabytes" },
 				"spec.resources.memory"),
+			Entry("egress entry that is a URL, not a DNS name or CIDR",
+				func(t *conveyorv1alpha1.Task) { t.Spec.Permissions.Egress = []string{"https://api.github.com"} },
+				"spec.permissions.egress"),
+			Entry("RBAC rule with no verbs",
+				func(t *conveyorv1alpha1.Task) {
+					t.Spec.Permissions.RBAC = []conveyorv1alpha1.RBACRule{
+						{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{}},
+					}
+				},
+				"spec.permissions.rbac[0].verbs"),
+			Entry("RBAC rule with no apiGroups",
+				func(t *conveyorv1alpha1.Task) {
+					t.Spec.Permissions.RBAC = []conveyorv1alpha1.RBACRule{
+						{APIGroups: []string{}, Resources: []string{"configmaps"}, Verbs: []string{"get"}},
+					}
+				},
+				"spec.permissions.rbac[0].apiGroups"),
+			Entry("RBAC rule with no resources",
+				func(t *conveyorv1alpha1.Task) {
+					t.Spec.Permissions.RBAC = []conveyorv1alpha1.RBACRule{
+						{APIGroups: []string{""}, Resources: []string{}, Verbs: []string{"get"}},
+					}
+				},
+				"spec.permissions.rbac[0].resources"),
+			Entry("inline prompt over 256 KiB",
+				func(t *conveyorv1alpha1.Task) { t.Spec.Prompt.Inline = strings.Repeat("x", 256*1024+1) },
+				"spec.prompt.inline"),
+		)
+
+		DescribeTable("accepts every egress shape the resolver understands",
+			func(entry string) {
+				task := newTask(taskName, taskNamespace, withEgress(entry))
+				Expect(k8sClient.Create(ctx, task)).To(Succeed())
+				Expect(k8sClient.Delete(ctx, task)).To(Succeed())
+			},
+			Entry("fully qualified DNS name", "api.github.com"),
+			Entry("single-label DNS name", "kube-dns"),
+			Entry("DNS name with trailing dot", "example.com."),
+			Entry("bare IPv4 address", "203.0.113.10"),
+			Entry("IPv4 CIDR block", "10.0.0.0/8"),
+			Entry("bare IPv6 address", "2001:db8::1"),
+			Entry("IPv6 CIDR block", "2001:db8::/32"),
+		)
+
+		DescribeTable("rejects invalid ClusterAgentClasses at admission",
+			func(mutate func(*conveyorv1alpha1.ClusterAgentClass), wantSubstring string) {
+				agent := &conveyorv1alpha1.ClusterAgentClass{
+					ObjectMeta: metav1.ObjectMeta{Name: "invalid-agent"},
+					Spec:       conveyorv1alpha1.ClusterAgentClassSpec{Image: "busybox:1.36"},
+				}
+				mutate(agent)
+				err := k8sClient.Create(ctx, agent)
+				Expect(apierrors.IsInvalid(err)).To(BeTrue(), "expected an Invalid error, got: %v", err)
+				Expect(err.Error()).To(ContainSubstring(wantSubstring))
+			},
+			Entry("empty image",
+				func(a *conveyorv1alpha1.ClusterAgentClass) { a.Spec.Image = "" },
+				"spec.image"),
+			Entry("unknown imagePullPolicy",
+				func(a *conveyorv1alpha1.ClusterAgentClass) { a.Spec.ImagePullPolicy = "Sometimes" },
+				"spec.imagePullPolicy"),
+			Entry("required egress entry that is a URL, not a DNS name or CIDR",
+				func(a *conveyorv1alpha1.ClusterAgentClass) {
+					a.Spec.Requires.Egress = []string{"https://api.anthropic.com"}
+				},
+				"spec.requires.egress"),
 		)
 
 		It("keeps the Task Pending with a requeue when the referenced AgentClass does not exist", func() {

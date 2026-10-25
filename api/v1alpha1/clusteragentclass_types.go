@@ -50,8 +50,12 @@ type AgentInputs struct {
 // AgentRequirements lists additional permissions this AgentClass always
 // needs, additive with whatever the Task itself declares.
 type AgentRequirements struct {
-	// egress allowlist the agent always needs (e.g. the LLM endpoint).
+	// egress allowlist the agent always needs (e.g. the LLM endpoint). Entries
+	// are DNS names, IP addresses or CIDR blocks, as in Task.spec.permissions.egress.
 	// +optional
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=253
+	// +kubebuilder:validation:items:XValidation:rule="isCIDR(self) || isIP(self) || self.matches('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*[.]?$')",message="must be a DNS name, an IP address or a CIDR block"
 	Egress []string `json:"egress,omitempty"`
 
 	// secrets the agent always needs mounted.
@@ -64,11 +68,13 @@ type AgentRequirements struct {
 type ClusterAgentClassSpec struct {
 	// image is the OCI reference for the agent.
 	// +required
+	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
 
 	// imagePullPolicy mirrors Pod.spec.containers[].imagePullPolicy.
 	// +optional
 	// +kubebuilder:default=IfNotPresent
+	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
 	ImagePullPolicy string `json:"imagePullPolicy,omitempty"`
 
 	// command overrides the image ENTRYPOINT.

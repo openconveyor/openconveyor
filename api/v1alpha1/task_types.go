@@ -43,8 +43,11 @@ type AgentRef struct {
 // Exactly one of inline / secretRef / configMapRef must be set.
 // +kubebuilder:validation:XValidation:rule="[has(self.inline) && self.inline.size() > 0, has(self.secretRef), has(self.configMapRef)].filter(x, x).size() == 1",message="exactly one of inline, secretRef or configMapRef must be set"
 type PromptSource struct {
-	// inline is the prompt body as a string.
+	// inline is the prompt body as a string. Capped at 256 KiB so the owned
+	// ConfigMap it is projected through stays well under the 1 MiB limit;
+	// use secretRef or configMapRef for larger prompts.
 	// +optional
+	// +kubebuilder:validation:MaxLength=262144
 	Inline string `json:"inline,omitempty"`
 
 	// secretRef reads the prompt from a Secret key in the Task's namespace.
@@ -65,9 +68,13 @@ type Permissions struct {
 	// +optional
 	Secrets []string `json:"secrets,omitempty"`
 
-	// egress is the allowlist of DNS names or CIDR blocks the Task may reach.
-	// Default-deny otherwise. Resolved to NetworkPolicy egress rules at reconcile time.
+	// egress is the allowlist of DNS names, IP addresses or CIDR blocks the
+	// Task may reach. Default-deny otherwise. Resolved to NetworkPolicy egress
+	// rules at reconcile time.
 	// +optional
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=253
+	// +kubebuilder:validation:items:XValidation:rule="isCIDR(self) || isIP(self) || self.matches('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*[.]?$')",message="must be a DNS name, an IP address or a CIDR block"
 	Egress []string `json:"egress,omitempty"`
 
 	// rbac is the list of Kubernetes RBAC rules the Task needs. Empty means
@@ -80,10 +87,13 @@ type Permissions struct {
 // but kept local so the Task CRD schema does not transitively embed rbac/v1.
 type RBACRule struct {
 	// +required
+	// +kubebuilder:validation:MinItems=1
 	APIGroups []string `json:"apiGroups"`
 	// +required
+	// +kubebuilder:validation:MinItems=1
 	Resources []string `json:"resources"`
 	// +required
+	// +kubebuilder:validation:MinItems=1
 	Verbs []string `json:"verbs"`
 	// +optional
 	ResourceNames []string `json:"resourceNames,omitempty"`

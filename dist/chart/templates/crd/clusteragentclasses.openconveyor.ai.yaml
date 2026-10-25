@@ -54,10 +54,15 @@ spec:
                 type: array
               image:
                 description: image is the OCI reference for the agent.
+                minLength: 1
                 type: string
               imagePullPolicy:
                 default: IfNotPresent
                 description: imagePullPolicy mirrors Pod.spec.containers[].imagePullPolicy.
+                enum:
+                - Always
+                - Never
+                - IfNotPresent
                 type: string
               inputs:
                 description: inputs describes how Task data reaches the agent container.
@@ -98,10 +103,16 @@ spec:
                   Task.spec.permissions at reconcile time.
                 properties:
                   egress:
-                    description: egress allowlist the agent always needs (e.g. the
-                      LLM endpoint).
+                    description: |-
+                      egress allowlist the agent always needs (e.g. the LLM endpoint). Entries
+                      are DNS names, IP addresses or CIDR blocks, as in Task.spec.permissions.egress.
                     items:
+                      maxLength: 253
                       type: string
+                      x-kubernetes-validations:
+                      - message: must be a DNS name, an IP address or a CIDR block
+                        rule: isCIDR(self) || isIP(self) || self.matches('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*[.]?$')
+                    maxItems: 256
                     type: array
                   secrets:
                     description: secrets the agent always needs mounted.

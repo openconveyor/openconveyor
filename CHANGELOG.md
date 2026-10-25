@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **API:** field-level validation so malformed specs are rejected at
+  admission instead of reaching the Job builder (#16). `ClusterAgentClass`:
+  `image` must be non-empty and `imagePullPolicy` is one of `Always`,
+  `Never`, `IfNotPresent`. `Task` and `ClusterTriggerClass` templates:
+  every `egress` entry must be a DNS name, an IP address or a CIDR block
+  (at most 256 entries of 253 characters), the same rule applies to
+  `ClusterAgentClass.spec.requires.egress`; each `rbac` rule needs at least
+  one `apiGroups`, `resources` and `verbs` entry; an inline prompt is capped
+  at 256 KiB (use `secretRef`/`configMapRef` for larger bodies).
+
 ### Changed
 
 - **e2e:** the suite no longer installs and removes cert-manager, which the
