@@ -56,7 +56,9 @@ func buildServiceAccount(task *conveyorv1alpha1.Task) *corev1.ServiceAccount {
 
 // buildJob materializes the Task + AgentClass into a hardened one-shot Job.
 //
-//   - non-root, read-only rootfs, no privilege escalation, all caps dropped
+//   - non-root + RuntimeDefault seccomp on the pod (covers injected
+//     sidecars); read-only rootfs, no privilege escalation, all caps
+//     dropped on the container
 //   - SA token mounted only when the Task declared RBAC rules
 //   - Secrets (Task.permissions.secrets ∪ AgentClass.requires.secrets)
 //     projected at /run/secrets/<name>/<key>, one file per Secret key
@@ -146,8 +148,23 @@ func buildJob(
 			RestartPolicy:                corev1.RestartPolicyNever,
 			ServiceAccountName:           taskResourceName(task),
 			AutomountServiceAccountToken: new(policy.NeedsServiceAccountToken(task.Spec.Permissions.RBAC)),
-			Containers:                   []corev1.Container{container},
-			Volumes:                      volumes,
+			// Identity and seccomp are set on the pod as well as the
+			// container: pod-level values apply to containers injected
+			// later (service-mesh sidecars) and are where Pod Security
+			// Standards "restricted" looks first. The container block
+			// repeats them so a hand-edited pod template that drops the
+			// pod field still runs hardened, and adds the container-only
+			// fields (read-only rootfs, no privilege escalation, no caps).
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: new(true),
+				RunAsUser:    new(nonRootUID),
+				RunAsGroup:   new(nonRootUID),
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
+			Containers: []corev1.Container{container},
+			Volumes:    volumes,
 		},
 	}
 

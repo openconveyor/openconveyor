@@ -73,18 +73,28 @@ Also: `backoffLimit: 0` — agent runs are expensive, never retry blindly.
 
 ## Pod hardening (belt and suspenders)
 
-Every Job pod runs with:
+Every Job pod runs with, at **pod** level (`spec.securityContext`):
 
 - `runAsNonRoot: true`, `runAsUser: 65532`, `runAsGroup: 65532`
-- `readOnlyRootFilesystem: true` (plus an `emptyDir` at `/tmp`)
-- `allowPrivilegeEscalation: false`
-- `capabilities.drop: [ALL]`
 - `seccompProfile.type: RuntimeDefault`
 - `restartPolicy: Never`
 
-These are pod-level, independent of cluster-level Pod Security
-Standards. An agent image that refuses to start under these is
-doing something we deliberately forbid.
+and on the agent **container** (`containers[].securityContext`):
+
+- `runAsNonRoot`, `runAsUser`, `runAsGroup` and `seccompProfile`
+  repeated, so the container stays hardened even if the pod-level
+  block is stripped by an admission mutation
+- `readOnlyRootFilesystem: true` (plus an `emptyDir` at `/tmp`)
+- `allowPrivilegeEscalation: false`
+- `capabilities.drop: [ALL]`
+
+Identity and seccomp sit on the pod because pod-level values also
+apply to containers injected after the fact (service-mesh sidecars)
+and are where the Pod Security Standards "restricted" profile reads
+them. The remaining three fields exist only on containers. All of
+this is set by the controller, independent of cluster-level Pod
+Security admission. An agent image that refuses to start under these
+is doing something we deliberately forbid.
 
 ## Controller permissions
 

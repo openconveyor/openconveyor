@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Security:** `runAsNonRoot`, `runAsUser`/`runAsGroup` (65532) and
+  `seccompProfile: RuntimeDefault` are now set on the Job's **pod**
+  security context as well as on the agent container, so containers
+  injected into the pod later (service-mesh sidecars) run under the same
+  identity and seccomp profile, and the pod matches the Pod Security
+  Standards "restricted" convention. The container block is unchanged.
+  (#26)
 - **e2e:** the suite no longer installs and removes cert-manager, which the
   controller does not use (about 30 s saved per run). The kind cluster is
   created from a pinned node image, `KIND_NODE_IMAGE` in the Makefile

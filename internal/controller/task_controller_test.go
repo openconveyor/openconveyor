@@ -230,6 +230,16 @@ var _ = Describe("Task Controller", func() {
 			Expect(*pod.AutomountServiceAccountToken).To(BeFalse(), "Phase 1 security baseline: no SA token in pod")
 		})
 
+		It("hardens the pod security context so injected sidecars inherit it", func() {
+			psc := job.Spec.Template.Spec.SecurityContext
+			Expect(psc).NotTo(BeNil())
+			Expect(psc.RunAsNonRoot).To(HaveValue(BeTrue()))
+			Expect(psc.RunAsUser).To(HaveValue(Equal(nonRootUID)))
+			Expect(psc.RunAsGroup).To(HaveValue(Equal(nonRootUID)))
+			Expect(psc.SeccompProfile).NotTo(BeNil())
+			Expect(psc.SeccompProfile.Type).To(Equal(corev1.SeccompProfileTypeRuntimeDefault))
+		})
+
 		It("hardens the container security context", func() {
 			pod := job.Spec.Template.Spec
 			Expect(pod.Containers).To(HaveLen(1))
