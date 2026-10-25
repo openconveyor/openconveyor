@@ -12,6 +12,10 @@ _Avoid_: job, run, TaskRun
 A Task whose phase is Completed, Failed or TimedOut. It will never run again.
 _Avoid_: finished Task, done Task, dead Task
 
+**Guarantee**:
+One of the four security defaults every Task gets without opting in: default-deny egress, no RBAC, secrets as files, and a mandatory hard timeout. A guarantee is never a knob.
+_Avoid_: feature, default setting, option
+
 **Agent**:
 A container image that reads a prompt and does the work. It knows nothing about OpenConveyor beyond the file contract it is started with.
 _Avoid_: bot, worker, runner
