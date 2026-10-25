@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -83,15 +84,34 @@ var _ = Describe("Task Controller", func() {
 	ctx := context.Background()
 	taskKey := types.NamespacedName{Name: taskName, Namespace: taskNamespace}
 
+	// recorder captures the Events a reconcile emits; drained by
+	// recordedEvents. Replaced per spec so Events never leak across.
+	var recorder *events.FakeRecorder
+
 	reconciler := func() *TaskReconciler {
 		return &TaskReconciler{
-			Client: k8sClient,
-			Scheme: k8sClient.Scheme(),
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: recorder,
 			Resolver: policy.StaticResolver{
 				Hosts: map[string][]string{
 					"api.example.com": {"203.0.113.10"},
 				},
 			},
+		}
+	}
+
+	// recordedEvents drains everything the recorder captured so far,
+	// each as "<Type> <Reason> <Message>".
+	recordedEvents := func() []string {
+		var got []string
+		for {
+			select {
+			case e := <-recorder.Events:
+				got = append(got, e)
+			default:
+				return got
+			}
 		}
 	}
 
@@ -121,6 +141,8 @@ var _ = Describe("Task Controller", func() {
 	}
 
 	BeforeEach(func() {
+		recorder = events.NewFakeRecorder(32)
+
 		By("ensuring a ClusterAgentClass exists")
 		ensureAgentClass(conveyorv1alpha1.ClusterAgentClassSpec{
 			Image:   "busybox:1.36",
@@ -865,6 +887,82 @@ var _ = Describe("Task Controller", func() {
 
 			var job batchv1.Job
 			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+		})
+	})
+
+	Context("Events — phase transitions and failures surface in kubectl describe", func() {
+		It("emits a Pending event when the Task is first reconciled into a Job", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace))).To(Succeed())
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(recordedEvents()).To(ConsistOf("Normal Pending Waiting for pod to start"))
+		})
+
+		It("emits a Warning when the Job fails, and nothing on a no-op reconcile", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace))).To(Succeed())
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			_ = recordedEvents()
+
+			By("reconciling again with nothing changed")
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(recordedEvents()).To(BeEmpty(), "an unchanged status must not re-emit")
+
+			By("failing the Job")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Failed = 1
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+				batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(recordedEvents()).To(ConsistOf("Warning Failed Job failed"))
+		})
+
+		It("emits a Warning when the egress allowlist cannot be resolved", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("api.example.com")))).To(Succeed())
+			broken := reconciler()
+			broken.Resolver = policy.StaticResolver{
+				Err: &net.DNSError{Err: "no such host", Name: "api.example.com", IsNotFound: true},
+			}
+			_, err := broken.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			events := recordedEvents()
+			Expect(events).To(HaveLen(1))
+			Expect(events[0]).To(HavePrefix("Warning EgressResolveFailed Egress allowlist could not be resolved: "))
+			Expect(events[0]).To(ContainSubstring("no such host"))
+		})
+
+		It("emits a Warning when the spec cannot be turned into a Job", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withConfig(`{"nested":{"a":1}}`)))).To(Succeed())
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			events := recordedEvents()
+			Expect(events).To(HaveLen(1))
+			Expect(events[0]).To(HavePrefix("Warning InvalidSpec Task spec is invalid: "))
+		})
+
+		It("emits a Warning once while the ClusterAgentClass is missing", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withAgentRef("nope")))).To(Succeed())
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(recordedEvents()).To(ConsistOf(
+				`Warning AgentClassMissing Waiting for ClusterAgentClass "nope" to be created`))
+
+			By("requeueing while the class is still missing")
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(recordedEvents()).To(BeEmpty(), "the periodic requeue must not spam Events")
 		})
 	})
 

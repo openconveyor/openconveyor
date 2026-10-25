@@ -20,6 +20,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -47,6 +48,9 @@ type TaskReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Resolver policy.Resolver
+	// Recorder publishes Events on the Task so phase transitions and
+	// failures show up in `kubectl describe task`. Nil means no Events.
+	Recorder events.EventRecorder
 }
 
 var _ reconcile.Reconciler = (*TaskReconciler)(nil)
@@ -58,7 +62,7 @@ var _ reconcile.Reconciler = (*TaskReconciler)(nil)
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
 
@@ -354,6 +358,9 @@ func (r *TaskReconciler) tasksForAgentClass(ctx context.Context, obj client.Obje
 func (r *TaskReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	if r.Resolver == nil {
 		r.Resolver = policy.DefaultResolver{}
+	}
+	if r.Recorder == nil {
+		r.Recorder = mgr.GetEventRecorder("conveyor")
 	}
 
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &conveyorv1alpha1.Task{}, taskAgentRefIndex,

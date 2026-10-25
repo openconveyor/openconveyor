@@ -63,6 +63,7 @@ func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.
 	if before.Phase != phase {
 		log.Info("Task phase transitioned", "from", before.Phase, "to", phase, "reason", reason)
 		metrics.ObservePhaseTransition(string(phase), reason)
+		r.recordEvent(task, eventTypeFor(phase), reason, msg)
 		if isTerminal(phase) && task.Status.StartTime != nil && task.Status.CompletionTime != nil {
 			dur := task.Status.CompletionTime.Sub(task.Status.StartTime.Time).Seconds()
 			metrics.ObserveTaskDuration(string(phase), dur)
@@ -70,6 +71,32 @@ func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.
 	}
 
 	return r.Status().Update(ctx, task)
+}
+
+// eventActionReconcile is the events.k8s.io/v1 `action` on every Event
+// the controller emits: each one reports what a reconcile did to the
+// Task.
+const eventActionReconcile = "Reconcile"
+
+// recordEvent publishes an Event on the Task when a Recorder is wired.
+// Messages follow the logging style guide: capital first letter, no
+// trailing period.
+func (r *TaskReconciler) recordEvent(task *conveyorv1alpha1.Task, eventType, reason, msg string) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Eventf(task, nil, eventType, reason, eventActionReconcile, "%s", msg)
+}
+
+// eventTypeFor maps a phase to the Event type: unhappy terminal phases
+// are Warnings, everything else is Normal.
+func eventTypeFor(phase conveyorv1alpha1.TaskPhase) string {
+	switch phase {
+	case conveyorv1alpha1.TaskPhaseFailed, conveyorv1alpha1.TaskPhaseTimedOut:
+		return corev1.EventTypeWarning
+	default:
+		return corev1.EventTypeNormal
+	}
 }
 
 func isTerminal(phase conveyorv1alpha1.TaskPhase) bool {
@@ -82,6 +109,10 @@ func isTerminal(phase conveyorv1alpha1.TaskPhase) bool {
 	return false
 }
 
+// derivePhase maps the Job's state to a Task phase, condition reason
+// and message. The Job controller leaves the condition message empty
+// for the common cases, so each branch falls back to a fixed sentence:
+// the same text ends up in the Ready condition and in the Event.
 func derivePhase(job *batchv1.Job) (conveyorv1alpha1.TaskPhase, string, string) {
 	for _, c := range job.Status.Conditions {
 		if c.Status != corev1.ConditionTrue {
@@ -89,22 +120,30 @@ func derivePhase(job *batchv1.Job) (conveyorv1alpha1.TaskPhase, string, string) 
 		}
 		switch c.Type {
 		case batchv1.JobComplete, batchv1.JobSuccessCriteriaMet:
-			return conveyorv1alpha1.TaskPhaseCompleted, reasonCompleted, c.Message
+			return conveyorv1alpha1.TaskPhaseCompleted, reasonCompleted, messageOr(c.Message, "Job completed")
 		case batchv1.JobFailed:
 			if c.Reason == batchv1.JobReasonDeadlineExceeded {
-				return conveyorv1alpha1.TaskPhaseTimedOut, reasonTimedOut, c.Message
+				return conveyorv1alpha1.TaskPhaseTimedOut, reasonTimedOut, messageOr(c.Message, "Job exceeded its deadline")
 			}
-			return conveyorv1alpha1.TaskPhaseFailed, reasonFailed, c.Message
+			return conveyorv1alpha1.TaskPhaseFailed, reasonFailed, messageOr(c.Message, "Job failed")
 		case batchv1.JobSuspended:
 			// A suspended Job would otherwise read as Running (StartTime is
 			// set) — report Pending so consumers don't think work is active.
-			return conveyorv1alpha1.TaskPhasePending, reasonSuspended, c.Message
+			return conveyorv1alpha1.TaskPhasePending, reasonSuspended, messageOr(c.Message, "Job is suspended")
 		}
 	}
 	if job.Status.Active > 0 || job.Status.StartTime != nil {
 		return conveyorv1alpha1.TaskPhaseRunning, reasonRunning, "Job is running"
 	}
 	return conveyorv1alpha1.TaskPhasePending, reasonPending, "Waiting for pod to start"
+}
+
+// messageOr returns msg, or fallback when the Job left it empty.
+func messageOr(msg, fallback string) string {
+	if msg == "" {
+		return fallback
+	}
+	return msg
 }
 
 func conditionStatusFor(phase conveyorv1alpha1.TaskPhase) metav1.ConditionStatus {
@@ -141,8 +180,20 @@ func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1
 	})
 	if prevPhase != conveyorv1alpha1.TaskPhaseFailed {
 		metrics.ObservePhaseTransition(string(conveyorv1alpha1.TaskPhaseFailed), reason)
+		r.recordEvent(task, corev1.EventTypeWarning, reason, invalidEventMessage(reason, msg))
 	}
 	return r.Status().Update(ctx, task)
+}
+
+// invalidEventMessage prefixes an error string with a sentence that
+// names what went wrong, so the Event reads well even though error
+// text starts lowercase.
+func invalidEventMessage(reason, msg string) string {
+	lead := "Task spec is invalid"
+	if reason == reasonEgressResolveFail {
+		lead = "Egress allowlist could not be resolved"
+	}
+	return lead + ": " + msg
 }
 
 // markWaitingForAgentClass records that the Task is waiting for its
@@ -152,18 +203,22 @@ func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1
 // periodic requeue doesn't spam the API server.
 func (r *TaskReconciler) markWaitingForAgentClass(ctx context.Context, task *conveyorv1alpha1.Task) error {
 	before := task.Status.DeepCopy()
+	msg := fmt.Sprintf("Waiting for ClusterAgentClass %q to be created", task.Spec.Agent.Ref)
 	task.Status.Phase = conveyorv1alpha1.TaskPhasePending
 	task.Status.ObservedGeneration = task.Generation
 	meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,
 		Status:             metav1.ConditionUnknown,
 		Reason:             reasonAgentClassMissing,
-		Message:            fmt.Sprintf("Waiting for ClusterAgentClass %q to be created", task.Spec.Agent.Ref),
+		Message:            msg,
 		ObservedGeneration: task.Generation,
 	})
 	if equalStatus(before, &task.Status) {
 		return nil
 	}
+	// A Task that cannot start until someone creates the class is
+	// actionable, hence Warning rather than Normal.
+	r.recordEvent(task, corev1.EventTypeWarning, reasonAgentClassMissing, msg)
 	return r.Status().Update(ctx, task)
 }
 
