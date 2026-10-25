@@ -85,10 +85,16 @@ spec:
                 properties:
                   egress:
                     description: |-
-                      egress is the allowlist of DNS names or CIDR blocks the Task may reach.
-                      Default-deny otherwise. Resolved to NetworkPolicy egress rules at reconcile time.
+                      egress is the allowlist of DNS names, IP addresses or CIDR blocks the
+                      Task may reach. Default-deny otherwise. Resolved to NetworkPolicy egress
+                      rules at reconcile time.
                     items:
+                      maxLength: 253
                       type: string
+                      x-kubernetes-validations:
+                      - message: must be a DNS name, an IP address or a CIDR block
+                        rule: isCIDR(self) || isIP(self) || self.matches('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*[.]?$')
+                    maxItems: 256
                     type: array
                   rbac:
                     description: |-
@@ -102,6 +108,7 @@ spec:
                         apiGroups:
                           items:
                             type: string
+                          minItems: 1
                           type: array
                         resourceNames:
                           items:
@@ -110,10 +117,12 @@ spec:
                         resources:
                           items:
                             type: string
+                          minItems: 1
                           type: array
                         verbs:
                           items:
                             type: string
+                          minItems: 1
                           type: array
                       required:
                       - apiGroups
@@ -159,7 +168,11 @@ spec:
                     type: object
                     x-kubernetes-map-type: atomic
                   inline:
-                    description: inline is the prompt body as a string.
+                    description: |-
+                      inline is the prompt body as a string. Capped at 256 KiB so the owned
+                      ConfigMap it is projected through stays well under the 1 MiB limit;
+                      use secretRef or configMapRef for larger prompts.
+                    maxLength: 262144
                     type: string
                   secretRef:
                     description: secretRef reads the prompt from a Secret key in the

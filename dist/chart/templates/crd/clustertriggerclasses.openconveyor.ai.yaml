@@ -123,8 +123,13 @@ spec:
                     description: agent is the AgentRef copied into every emitted Task.
                     properties:
                       config:
-                        description: config is passed to the agent image as-is (mounted
-                          as JSON at /task/config.json).
+                        description: |-
+                          config is non-secret, agent-specific configuration as a JSON object.
+                          Top-level scalar fields are projected into the agent container as
+                          environment variables named after the field (e.g. TARGET_REPO). The
+                          full JSON is additionally delivered at the AgentClass-declared
+                          inputs.config mount path and/or env var, when set. Never put secrets
+                          here — env vars leak into /proc; use permissions.secrets instead.
                         type: object
                         x-kubernetes-preserve-unknown-fields: true
                       ref:
@@ -162,6 +167,9 @@ spec:
                               "labels.<key>"        — set a label on the Task
                               "annotations.<key>"   — set an annotation on the Task
                               "name"                — override the generated Task name
+                              "config.<key>"        — set Task.spec.agent.config.<key>, which the
+                                                      controller projects into the agent container
+                                                      as the env var $<key>
                           type: string
                       required:
                       - from
@@ -177,10 +185,16 @@ spec:
                     properties:
                       egress:
                         description: |-
-                          egress is the allowlist of DNS names or CIDR blocks the Task may reach.
-                          Default-deny otherwise. Resolved to NetworkPolicy egress rules at reconcile time.
+                          egress is the allowlist of DNS names, IP addresses or CIDR blocks the
+                          Task may reach. Default-deny otherwise. Resolved to NetworkPolicy egress
+                          rules at reconcile time.
                         items:
+                          maxLength: 253
                           type: string
+                          x-kubernetes-validations:
+                          - message: must be a DNS name, an IP address or a CIDR block
+                            rule: isCIDR(self) || isIP(self) || self.matches('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*[.]?$')
+                        maxItems: 256
                         type: array
                       rbac:
                         description: |-
@@ -194,6 +208,7 @@ spec:
                             apiGroups:
                               items:
                                 type: string
+                              minItems: 1
                               type: array
                             resourceNames:
                               items:
@@ -202,10 +217,12 @@ spec:
                             resources:
                               items:
                                 type: string
+                              minItems: 1
                               type: array
                             verbs:
                               items:
                                 type: string
+                              minItems: 1
                               type: array
                           required:
                           - apiGroups
