@@ -194,8 +194,8 @@ documentation or convention:
 2. **Default-zero RBAC.** `automountServiceAccountToken=false`
    unless the Task explicitly declares `permissions.rbac`.
 3. **Declared secrets only.** Secrets are projected as read-only
-   files at `/run/secrets/<name>`. Never as env vars (env leaks via
-   `/proc` and child processes).
+   files at `/run/secrets/<name>/<key>`, one file per Secret key.
+   Never as env vars (env leaks via `/proc` and child processes).
 4. **Hard kill.** `spec.resources.timeout` is mandatory; it maps to
    `Job.spec.activeDeadlineSeconds`. `backoffLimit: 0` — no blind
    retries on expensive agent runs.

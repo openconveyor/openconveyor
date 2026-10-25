@@ -282,7 +282,7 @@ var _ = Describe("Task Controller", func() {
 			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
 		})
 
-		It("projects the declared Secret as a read-only volume at /run/secrets/<name>", func() {
+		It("projects the declared Secret as read-only files at /run/secrets/<name>/<key>", func() {
 			pod := job.Spec.Template.Spec
 			Expect(pod.AutomountServiceAccountToken).NotTo(BeNil())
 			Expect(*pod.AutomountServiceAccountToken).To(BeTrue(), "RBAC declared → SA token mounted")
@@ -295,6 +295,7 @@ var _ = Describe("Task Controller", func() {
 			}
 			Expect(secretMount).NotTo(BeNil(), "expected secret volume mount")
 			Expect(secretMount.ReadOnly).To(BeTrue())
+			Expect(secretMount.SubPath).To(BeEmpty(), "whole Secret mounted as a directory, one file per key")
 
 			var secretVol *corev1.Volume
 			for i, v := range pod.Volumes {
@@ -303,6 +304,7 @@ var _ = Describe("Task Controller", func() {
 				}
 			}
 			Expect(secretVol).NotTo(BeNil(), "expected secret volume in pod")
+			Expect(secretVol.Secret.Items).To(BeEmpty(), "every key of the Secret becomes a file under /run/secrets/<name>/")
 		})
 
 		It("emits a NetworkPolicy allowlisting resolved egress + DNS", func() {

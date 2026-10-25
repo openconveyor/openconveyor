@@ -43,8 +43,9 @@ Verify with `kubectl auth can-i --list --as=system:serviceaccount:<ns>:<task>`.
 ### 3. Declared secrets only
 
 `spec.permissions.secrets` is a list of Secret names. The reconciler
-projects each as a read-only volume at `/run/secrets/<name>`. Nothing
-is ever exposed via env vars. The tradeoff:
+projects each as a read-only volume at `/run/secrets/<name>/`, with one
+file per Secret key: `/run/secrets/<name>/<key>`. Nothing is ever
+exposed via env vars. The tradeoff:
 
 - Env vars live in `/proc/<pid>/environ` and are inherited by every
   child process. A subprocess crashing to stderr with its env included

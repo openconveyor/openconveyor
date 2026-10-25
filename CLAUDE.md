@@ -72,7 +72,7 @@ system-wide.
   in the reconciler.
 - **`automountServiceAccountToken=false`** unless `permissions.rbac`
   is non-empty. Egress empty → default-deny NetworkPolicy. Secrets
-  are projected as files at `/run/secrets/<name>`, never env vars
+  are projected as files at `/run/secrets/<name>/<key>`, never env vars
   (ADR-0004). These defaults are guarantees, not knobs.
 - **`spec.resources.timeout` is mandatory** and maps to
   `Job.spec.activeDeadlineSeconds`; `backoffLimit: 0`. No retries

@@ -60,8 +60,8 @@ type PromptSource struct {
 // Anything not listed here is denied by the controller.
 type Permissions struct {
 	// secrets is the list of Secret names (in the Task's namespace) projected
-	// as files at /run/secrets/<name>. Env-var injection is intentionally not
-	// supported — env vars leak into /proc.
+	// as files at /run/secrets/<name>/<key>, one file per Secret key. Env-var
+	// injection is intentionally not supported — env vars leak into /proc.
 	// +optional
 	Secrets []string `json:"secrets,omitempty"`
 

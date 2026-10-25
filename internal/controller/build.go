@@ -59,7 +59,7 @@ func buildServiceAccount(task *conveyorv1alpha1.Task) *corev1.ServiceAccount {
 //   - non-root, read-only rootfs, no privilege escalation, all caps dropped
 //   - SA token mounted only when the Task declared RBAC rules
 //   - Secrets (Task.permissions.secrets ∪ AgentClass.requires.secrets)
-//     projected at /run/secrets/<name>
+//     projected at /run/secrets/<name>/<key>, one file per Secret key
 //   - Prompt mounted at the AgentClass-declared path (or absent if the
 //     AgentClass does not read a prompt)
 //   - egress is governed externally by the Task's NetworkPolicy
