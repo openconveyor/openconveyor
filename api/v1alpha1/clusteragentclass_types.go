@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // AgentInputMount describes how a piece of Task input reaches the agent container.
@@ -128,5 +129,8 @@ type ClusterAgentClassList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&ClusterAgentClass{}, &ClusterAgentClassList{})
+	SchemeBuilder.Register(func(s *runtime.Scheme) error {
+		s.AddKnownTypes(SchemeGroupVersion, &ClusterAgentClass{}, &ClusterAgentClassList{})
+		return nil
+	})
 }

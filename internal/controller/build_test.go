@@ -191,8 +191,7 @@ func TestBuildResourceRequirements(t *testing.T) {
 				if err == nil {
 					t.Fatalf("buildResourceRequirements() = nil error, want error containing %q", tt.wantErr)
 				}
-				var perm *policy.PermanentError
-				if !errors.As(err, &perm) {
+				if _, ok := errors.AsType[*policy.PermanentError](err); !ok {
 					t.Fatalf("buildResourceRequirements() error %v is not a *policy.PermanentError", err)
 				}
 				if !strings.Contains(err.Error(), tt.wantErr) {

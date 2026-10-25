@@ -53,6 +53,11 @@ linters:
       - linters:
           - gosec
         path: test/*
+      # Repeated literals in tests are fixtures, not constants worth naming;
+      # goconst started scanning them under golangci-lint v2.15.
+      - linters:
+          - goconst
+        path: _test\.go
     paths:
       - third_party$
       - builtin$

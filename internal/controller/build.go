@@ -16,7 +16,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 	"github.com/openconveyor/openconveyor/internal/policy"
@@ -124,11 +123,11 @@ func buildJob(
 		Env:             config.Env,
 		Resources:       resourceReqs,
 		SecurityContext: &corev1.SecurityContext{
-			RunAsNonRoot:             ptr.To(true),
-			RunAsUser:                ptr.To(nonRootUID),
-			RunAsGroup:               ptr.To(nonRootUID),
-			ReadOnlyRootFilesystem:   ptr.To(true),
-			AllowPrivilegeEscalation: ptr.To(false),
+			RunAsNonRoot:             new(true),
+			RunAsUser:                new(nonRootUID),
+			RunAsGroup:               new(nonRootUID),
+			ReadOnlyRootFilesystem:   new(true),
+			AllowPrivilegeEscalation: new(false),
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{"ALL"},
 			},
@@ -146,7 +145,7 @@ func buildJob(
 		Spec: corev1.PodSpec{
 			RestartPolicy:                corev1.RestartPolicyNever,
 			ServiceAccountName:           taskResourceName(task),
-			AutomountServiceAccountToken: ptr.To(policy.NeedsServiceAccountToken(task.Spec.Permissions.RBAC)),
+			AutomountServiceAccountToken: new(policy.NeedsServiceAccountToken(task.Spec.Permissions.RBAC)),
 			Containers:                   []corev1.Container{container},
 			Volumes:                      volumes,
 		},
@@ -159,9 +158,9 @@ func buildJob(
 			Labels:    ownershipLabels(task),
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit:            ptr.To(int32(0)),
-			ActiveDeadlineSeconds:   ptr.To(int64(task.Spec.Resources.Timeout.Seconds())),
-			TTLSecondsAfterFinished: ptr.To(defaultTTLSeconds),
+			BackoffLimit:            new(int32(0)),
+			ActiveDeadlineSeconds:   new(int64(task.Spec.Resources.Timeout.Seconds())),
+			TTLSecondsAfterFinished: new(defaultTTLSeconds),
 			Template:                pod,
 		},
 	}, nil
