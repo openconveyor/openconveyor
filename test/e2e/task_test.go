@@ -125,6 +125,11 @@ func taskSpecs() {
 		Expect(job.Spec.BackoffLimit).To(HaveValue(BeEquivalentTo(0)))
 		Expect(job.Spec.ActiveDeadlineSeconds).To(HaveValue(BeEquivalentTo(120)))
 		podSpec := job.Spec.Template.Spec
+		Expect(podSpec.SecurityContext).NotTo(BeNil(), "pod-level security context must be set")
+		Expect(podSpec.SecurityContext.RunAsNonRoot).To(HaveValue(BeTrue()))
+		Expect(podSpec.SecurityContext.RunAsUser).To(HaveValue(BeEquivalentTo(65532)))
+		Expect(podSpec.SecurityContext.SeccompProfile).NotTo(BeNil())
+		Expect(podSpec.SecurityContext.SeccompProfile.Type).To(Equal(corev1.SeccompProfileTypeRuntimeDefault))
 		Expect(podSpec.AutomountServiceAccountToken).To(HaveValue(BeFalse()))
 		Expect(podSpec.ServiceAccountName).To(Equal(sas.Items[0].Name))
 		Expect(podSpec.Containers).To(HaveLen(1))

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,7 +25,10 @@ import (
 // TestBuildJob_SecurityDefaults locks every hardening flag the security
 // model calls a guarantee, not a knob (docs/security-model.md), against
 // regression — independent of envtest.
-func TestBuildJob_SecurityDefaults(t *testing.T) {
+// buildMinimalJob runs buildJob on a Task with no declared permissions
+// and a bare ClusterAgentClass: the security baseline every Task gets.
+func buildMinimalJob(t *testing.T) *batchv1.Job {
+	t.Helper()
 	task := &conveyorv1alpha1.Task{
 		ObjectMeta: metav1.ObjectMeta{Name: "sec-task", Namespace: "ns"},
 		Spec: conveyorv1alpha1.TaskSpec{
@@ -44,6 +48,33 @@ func TestBuildJob_SecurityDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildJob() = %v, want nil", err)
 	}
+	return job
+}
+
+// TestBuildJob_PodSecurityContext pins identity and seccomp at pod level
+// (#26): pod-level values cover injected sidecars (service meshes) and
+// are where PSS "restricted" reads them.
+func TestBuildJob_PodSecurityContext(t *testing.T) {
+	psc := buildMinimalJob(t).Spec.Template.Spec.SecurityContext
+	if psc == nil {
+		t.Fatal("pod SecurityContext not set")
+	}
+	if psc.RunAsNonRoot == nil || !*psc.RunAsNonRoot {
+		t.Errorf("pod RunAsNonRoot = %v, want true", psc.RunAsNonRoot)
+	}
+	if psc.RunAsUser == nil || *psc.RunAsUser != nonRootUID {
+		t.Errorf("pod RunAsUser = %v, want %d", psc.RunAsUser, nonRootUID)
+	}
+	if psc.RunAsGroup == nil || *psc.RunAsGroup != nonRootUID {
+		t.Errorf("pod RunAsGroup = %v, want %d", psc.RunAsGroup, nonRootUID)
+	}
+	if psc.SeccompProfile == nil || psc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Errorf("pod SeccompProfile = %v, want RuntimeDefault", psc.SeccompProfile)
+	}
+}
+
+func TestBuildJob_SecurityDefaults(t *testing.T) {
+	job := buildMinimalJob(t)
 
 	if got := *job.Spec.BackoffLimit; got != 0 {
 		t.Errorf("BackoffLimit = %d, want 0 (no blind retries)", got)
