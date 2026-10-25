@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-25
+
+Toolchain and dependency release. No behaviour change; same CRDs,
+same defaults. Rebuilt images and chart for the Go 1.25 end-of-life and
+the advisories below.
+
 ### Changed
 
 - **Toolchain:** Go 1.26 minimum, built and released with Go 1.27.3;
