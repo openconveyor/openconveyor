@@ -41,9 +41,11 @@ const (
 	agentContainerName = "agent"
 )
 
-// buildServiceAccount returns the Task's dedicated ServiceAccount. Token
-// automounting is governed by the pod spec (not the SA) so we always keep
-// the SA's AutomountServiceAccountToken unset; the Job decides.
+// buildServiceAccount returns the Task's dedicated ServiceAccount. Its
+// automount flag mirrors the pod's: false unless the Task declares RBAC.
+// The pod spec already withholds the token, but setting it on the SA as
+// well means any other pod that ever runs as this SA gets no token
+// either (defence in depth, #68).
 func buildServiceAccount(task *conveyorv1alpha1.Task) *corev1.ServiceAccount {
 	return &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
@@ -51,6 +53,7 @@ func buildServiceAccount(task *conveyorv1alpha1.Task) *corev1.ServiceAccount {
 			Namespace: task.Namespace,
 			Labels:    ownershipLabels(task),
 		},
+		AutomountServiceAccountToken: new(policy.NeedsServiceAccountToken(task.Spec.Permissions.RBAC)),
 	}
 }
 

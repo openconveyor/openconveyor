@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Security:** the Task's ServiceAccount now sets
+  `automountServiceAccountToken` to the same value as the Job pod (`false`
+  unless `spec.permissions.rbac` is declared), and the reconciler restores
+  it if changed out-of-band. Any other pod that runs as that SA gets no
+  token either. No behavior change for Tasks. (#68)
 - **Security:** `runAsNonRoot`, `runAsUser`/`runAsGroup` (65532) and
   `seccompProfile: RuntimeDefault` are now set on the Job's **pod**
   security context as well as on the agent container, so containers

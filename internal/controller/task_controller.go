@@ -201,7 +201,10 @@ func ensureOwned[T client.Object](
 }
 
 func (r *TaskReconciler) ensureServiceAccount(ctx context.Context, task *conveyorv1alpha1.Task) error {
-	return ensureOwned(ctx, r, task, buildServiceAccount(task), &corev1.ServiceAccount{}, nil)
+	return ensureOwned(ctx, r, task, buildServiceAccount(task), &corev1.ServiceAccount{},
+		func(existing, desired *corev1.ServiceAccount) {
+			existing.AutomountServiceAccountToken = desired.AutomountServiceAccountToken
+		})
 }
 
 // ensureRole materializes (or tears down) the namespaced Role for this

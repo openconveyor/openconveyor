@@ -31,7 +31,10 @@ See `internal/policy/networkpolicy.go` and the Phase 2 envtest in
 
 `pod.spec.automountServiceAccountToken` is `false` unless the Task
 declares `spec.permissions.rbac`. No ambient token in `/var/run` means
-no accidental cluster API calls from a compromised agent.
+no accidental cluster API calls from a compromised agent. The Task's
+ServiceAccount carries the same `automountServiceAccountToken` value,
+so a pod that someone else points at that SA gets no token either; the
+reconciler restores both if they are changed out-of-band.
 
 When RBAC is declared, the reconciler materializes a namespaced
 `Role` + `RoleBinding` containing only the verbs listed. The

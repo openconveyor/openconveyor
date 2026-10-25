@@ -209,9 +209,11 @@ var _ = Describe("Task Controller", func() {
 			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
 		})
 
-		It("owns a ServiceAccount (token automount is enforced at the pod spec, not the SA)", func() {
+		It("owns a ServiceAccount that withholds its token too", func() {
 			var sa corev1.ServiceAccount
 			Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
+			Expect(sa.AutomountServiceAccountToken).To(HaveValue(BeFalse()),
+				"no RBAC declared → the SA itself must not hand out tokens")
 		})
 
 		It("materializes a Job with no retries and the Task timeout as its deadline", func() {
@@ -292,6 +294,20 @@ var _ = Describe("Task Controller", func() {
 			Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
 			Expect(sa.Labels).To(HaveKeyWithValue(policy.LabelTaskName, taskName))
 		})
+
+		It("repairs an out-of-band re-enabled ServiceAccount token automount", func() {
+			By("flipping automount on out-of-band")
+			var sa corev1.ServiceAccount
+			Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
+			sa.AutomountServiceAccountToken = new(true)
+			Expect(k8sClient.Update(ctx, &sa)).To(Succeed())
+
+			By("reconciling again restores the default")
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
+			Expect(sa.AutomountServiceAccountToken).To(HaveValue(BeFalse()))
+		})
 	})
 
 	Context("declared permissions — Phase 2 policy generation", func() {
@@ -315,10 +331,16 @@ var _ = Describe("Task Controller", func() {
 			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
 		})
 
+		It("mounts the ServiceAccount token on both the pod and the SA when RBAC is declared", func() {
+			pod := job.Spec.Template.Spec
+			Expect(pod.AutomountServiceAccountToken).To(HaveValue(BeTrue()), "RBAC declared → SA token mounted")
+			var sa corev1.ServiceAccount
+			Expect(k8sClient.Get(ctx, taskKey, &sa)).To(Succeed())
+			Expect(sa.AutomountServiceAccountToken).To(HaveValue(BeTrue()))
+		})
+
 		It("projects the declared Secret as read-only files at /run/secrets/<name>/<key>", func() {
 			pod := job.Spec.Template.Spec
-			Expect(pod.AutomountServiceAccountToken).NotTo(BeNil())
-			Expect(*pod.AutomountServiceAccountToken).To(BeTrue(), "RBAC declared → SA token mounted")
 
 			var secretMount *corev1.VolumeMount
 			for i, m := range pod.Containers[0].VolumeMounts {
