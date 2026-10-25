@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ClusterAgentClass.spec.requires.egress`; each `rbac` rule needs at least
   one `apiGroups`, `resources` and `verbs` entry; an inline prompt is capped
   at 256 KiB (use `secretRef`/`configMapRef` for larger bodies).
+- **e2e:** two real Task scenarios on kind (#39). The positive one runs a
+  busybox Task to `Completed` and asserts the owned ServiceAccount,
+  deny-all NetworkPolicy and hardened Job (`backoffLimit: 0`, deadline =
+  timeout, no SA token, UID 65532). The negative one, promised in
+  `docs/security-model.md`, runs a Task with no egress whose agent tries
+  `wget https://example.com` and asserts it never reaches `Completed`.
+  While writing it we found that kindnet only enforces a policy about a
+  second after the container starts; the doc now records that caveat.
 
 ### Changed
 
