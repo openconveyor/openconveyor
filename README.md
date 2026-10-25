@@ -91,12 +91,12 @@ Requirements: `kubectl`, a Kubernetes 1.29+ cluster (k3s / kind / EKS /
 anything — 1.29 is needed for the CEL admission validation on the CRDs).
 
 ```sh
-# 1. Install CRDs + controller. Pulls the v0.2.0 multi-arch image
+# 1. Install CRDs + controller. Pulls the v0.2.1 multi-arch image
 #    (linux/amd64 + linux/arm64) from ghcr.io/openconveyor/conveyor.
-kubectl apply -f https://github.com/openconveyor/openconveyor/releases/download/v0.2.0/install.yaml
+kubectl apply -f https://github.com/openconveyor/openconveyor/releases/download/v0.2.1/install.yaml
 
 # 2. Apply the sample AgentClass + a Task.
-kubectl apply -k https://github.com/openconveyor/openconveyor//config/samples?ref=v0.2.0
+kubectl apply -k https://github.com/openconveyor/openconveyor//config/samples?ref=v0.2.1
 kubectl get tasks -w
 ```
 
@@ -111,7 +111,7 @@ images (also attached to each GitHub Release as a `.tgz`):
 
 ```sh
 helm install conveyor oci://ghcr.io/openconveyor/charts/conveyor \
-  --version 0.2.0 \
+  --version 0.2.1 \
   --namespace conveyor-system --create-namespace
 ```
 
@@ -233,7 +233,7 @@ OpenConveyor is in alpha and moving fast. The next milestones:
 
 ## Status
 
-**Alpha.** v0.2.0 is the current release; the security baseline
+**Alpha.** v0.2.1 is the current release; the security baseline
 and trigger adapter are covered by unit and `envtest` integration
 tests, and the controller exposes custom Prometheus metrics on the
 manager's `/metrics` endpoint. APIs may still change before v1.0.

@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: claude-code-implementer
 spec:
-  image: ghcr.io/openconveyor/agent-claude-implementer:v0.2.0
+  image: ghcr.io/openconveyor/agent-claude-implementer:v0.2.1
   imagePullPolicy: IfNotPresent
   inputs:
     # The agent's entrypoint reads /task/prompt to learn what to do.
