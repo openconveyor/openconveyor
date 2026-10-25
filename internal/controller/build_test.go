@@ -141,6 +141,33 @@ func TestBuildJob_SecurityDefaults(t *testing.T) {
 
 // TestBuildJob_RBACMountsToken pins the automount flip side: declaring
 // any RBAC rule mounts the ServiceAccount token.
+// TestBuildServiceAccount_Automount pins #68: the ServiceAccount
+// mirrors the pod's automount decision, so anything else that ever
+// runs as this SA gets no token either unless RBAC was declared.
+func TestBuildServiceAccount_Automount(t *testing.T) {
+	rule := conveyorv1alpha1.RBACRule{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get"}}
+	tests := []struct {
+		name string
+		rbac []conveyorv1alpha1.RBACRule
+		want bool
+	}{
+		{"no RBAC declared → token withheld", nil, false},
+		{"RBAC declared → token mounted", []conveyorv1alpha1.RBACRule{rule}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task := &conveyorv1alpha1.Task{
+				ObjectMeta: metav1.ObjectMeta{Name: "sa-task", Namespace: "ns"},
+				Spec:       conveyorv1alpha1.TaskSpec{Permissions: conveyorv1alpha1.Permissions{RBAC: tt.rbac}},
+			}
+			got := buildServiceAccount(task).AutomountServiceAccountToken
+			if got == nil || *got != tt.want {
+				t.Errorf("AutomountServiceAccountToken = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildJob_RBACMountsToken(t *testing.T) {
 	task := &conveyorv1alpha1.Task{
 		ObjectMeta: metav1.ObjectMeta{Name: "rbac-task", Namespace: "ns"},

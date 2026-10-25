@@ -106,6 +106,8 @@ func taskSpecs() {
 		var sas corev1.ServiceAccountList
 		Expect(kubectlGet(&sas, "serviceaccount", "-n", taskNamespace, "-l", selector)).To(Succeed())
 		Expect(sas.Items).To(HaveLen(1))
+		Expect(sas.Items[0].AutomountServiceAccountToken).To(HaveValue(BeFalse()),
+			"no RBAC declared → the SA must not hand out tokens")
 
 		By("checking the owned NetworkPolicy is deny-all")
 		var nps networkingv1.NetworkPolicyList
