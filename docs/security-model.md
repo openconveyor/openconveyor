@@ -147,6 +147,17 @@ kubectl get networkpolicy <task> -o yaml    # deny-all ingress; declared egress 
 ```
 
 The `envtest` suite covers the positive path (policy objects are
-created correctly). A future CI job should add the negative path
-(attempt a disallowed egress and assert it fails) against a real
-kind cluster.
+created correctly). The e2e suite (`make test-e2e`, kind) covers the
+negative path: a Task with no egress whose agent runs
+`wget https://example.com` must end `Failed` or `TimedOut`
+(`test/e2e/testdata/task_egress_denied.yaml`).
+
+One caveat the e2e spec works around rather than fixes: kind's CNI
+(kindnet with kube-network-policies) only starts filtering a pod's
+traffic once it has indexed the pod IP, about a second after the
+container starts, and a connection opened inside that window is
+accepted for its lifetime. The controller already creates the
+NetworkPolicy before the Job, so nothing on its side can shrink the
+window; it is a property of the CNI. CNIs that program policy at
+sandbox creation (Calico, Cilium) do not have it. Pick accordingly
+for production clusters.

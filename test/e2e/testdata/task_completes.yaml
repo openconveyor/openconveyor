@@ -1,0 +1,31 @@
+# Positive e2e scenario (#39): a Task with no permissions on a busybox
+# agent that reads its prompt and exits 0. Lifted from the manual kind
+# smoke in #57. Applied and deleted by test/e2e/task_test.go; the
+# namespace is created by the suite.
+apiVersion: openconveyor.ai/v1alpha1
+kind: ClusterAgentClass
+metadata:
+  name: e2e-busybox
+spec:
+  image: busybox:1.36
+  imagePullPolicy: IfNotPresent
+  command: ["sh", "-c"]
+  args: ["cat /task/prompt && sleep 3"]
+  inputs:
+    prompt:
+      mount: /task/prompt
+---
+apiVersion: openconveyor.ai/v1alpha1
+kind: Task
+metadata:
+  name: e2e-completes
+  namespace: e2e-tasks
+spec:
+  agent:
+    ref: e2e-busybox
+  prompt:
+    inline: hello from the e2e suite
+  resources:
+    cpu: 100m
+    memory: 64Mi
+    timeout: 2m
