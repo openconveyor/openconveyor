@@ -202,7 +202,7 @@ func toIPBlocks(cidrs []string) []networkingv1.NetworkPolicyPeer {
 // kube-system — the stock CoreDNS label set on every mainstream k8s distro.
 // Without this rule the pod cannot resolve the names the user listed.
 func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
-	port := ptr.To(intstr.FromInt32(dnsPort))
+	port := new(intstr.FromInt32(dnsPort))
 	return networkingv1.NetworkPolicyEgressRule{
 		To: []networkingv1.NetworkPolicyPeer{
 			{

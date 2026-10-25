@@ -110,8 +110,7 @@ func TestBuildNetworkPolicy_InvalidCIDR(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on invalid CIDR")
 	}
-	var perm *PermanentError
-	if !errors.As(err, &perm) {
+	if _, ok := errors.AsType[*PermanentError](err); !ok {
 		t.Errorf("invalid CIDR must be a PermanentError, got %T: %v", err, err)
 	}
 }
@@ -189,8 +188,7 @@ func TestBuildNetworkPolicy_LookupIsBounded(t *testing.T) {
 	if !sawDeadline {
 		t.Error("resolver ctx has no deadline — a hung resolver would stall the reconcile worker")
 	}
-	var perm *PermanentError
-	if errors.As(err, &perm) {
+	if _, ok := errors.AsType[*PermanentError](err); ok {
 		t.Errorf("timeout must stay transient, got PermanentError: %v", err)
 	}
 }

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Toolchain:** Go 1.26 minimum, built and released with Go 1.27.3;
+  controller-runtime v0.24.1 and k8s.io/* v0.36.3 (envtest 1.36).
+  Builder image `golang:1.27`. Go 1.25 is end-of-life and its stdlib
+  fails `govulncheck`.
+- **Dependencies:** golang.org/x/net v0.61.0, google.golang.org/grpc
+  v1.84.0 and go.opentelemetry.io/otel/sdk v1.45.0 for published
+  advisories (GO-2026-6617, GO-2026-6612, GO-2026-6348, GO-2026-6505).
+- **Tooling:** controller-tools v0.21.0, golangci-lint v2.15.0. The API
+  package registers types with `runtime.NewSchemeBuilder` and no longer
+  imports controller-runtime.
+
+No behaviour change. CRDs differ only in the controller-gen annotation.
+
 ## [0.2.0] — 2026-07-27
 
 Installable in one command:

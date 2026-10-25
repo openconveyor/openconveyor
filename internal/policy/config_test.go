@@ -115,8 +115,7 @@ func TestBuildConfigProjection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			proj, err := BuildConfigProjection("task-1", tc.config, tc.inputs)
 			if tc.wantPermanent {
-				var perm *PermanentError
-				if !errors.As(err, &perm) {
+				if _, ok := errors.AsType[*PermanentError](err); !ok {
 					t.Fatalf("expected PermanentError, got %v", err)
 				}
 				return
