@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Controller:** Kubernetes Events on the Task so `kubectl describe task`
+  shows what happened (#20). A `Normal` Event per phase transition
+  (`Pending`, `Running`, `Completed`) and a `Warning` for `Failed`,
+  `TimedOut`, `InvalidSpec`, `EgressResolveFailed` and
+  `AgentClassMissing`; reason and message match the `Ready` condition.
+  The controller now needs `create`/`patch` on `events.k8s.io` Events
+  instead of core `events`; the Ready condition carries a fixed message
+  (`Job failed`, `Job exceeded its deadline`, …) when the Job reports
+  none.
 - **API:** field-level validation so malformed specs are rejected at
   admission instead of reaching the Job builder (#16). `ClusterAgentClass`:
   `image` must be non-empty and `imagePullPolicy` is one of `Always`,

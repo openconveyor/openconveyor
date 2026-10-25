@@ -80,6 +80,16 @@ from a small closed enum (`AgentClassMissing`, `InvalidSpec`,
 `EgressResolveFailed`, …). Triggers should watch conditions, not
 scrape phase strings.
 
+For humans, the same transitions are published as Kubernetes Events
+on the Task (`events.k8s.io/v1`, reporting controller `conveyor`), so
+`kubectl describe task <name>` shows the history: one `Normal` Event
+per phase change (`Pending`, `Running`, `Completed`) and a `Warning`
+for every unhappy outcome (`Failed`, `TimedOut`, `InvalidSpec`,
+`EgressResolveFailed`, `AgentClassMissing`). The Event reason is the
+condition reason, the message is the condition message. Nothing is
+emitted when a reconcile leaves the status unchanged, so the periodic
+requeue of a waiting Task does not spam Events.
+
 ## What lives outside the controller
 
 Triggers and agents are out of process. They touch only the

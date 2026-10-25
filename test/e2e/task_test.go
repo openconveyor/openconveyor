@@ -129,6 +129,17 @@ func taskSpecs() {
 		Expect(podSpec.ServiceAccountName).To(Equal(sas.Items[0].Name))
 		Expect(podSpec.Containers).To(HaveLen(1))
 		Expect(podSpec.Containers[0].SecurityContext.RunAsUser).To(HaveValue(BeEquivalentTo(65532)))
+
+		By("checking the controller recorded the phase transitions as Events on the Task")
+		var events corev1.EventList
+		Expect(kubectlGet(&events, "events", "-n", taskNamespace,
+			"--field-selector", "involvedObject.kind=Task,involvedObject.name="+taskName)).To(Succeed())
+		var reasons []string
+		for _, e := range events.Items {
+			Expect(e.ReportingController).To(Equal("conveyor"))
+			reasons = append(reasons, e.Reason)
+		}
+		Expect(reasons).To(ContainElements("Pending", "Completed"))
 	})
 
 	It("fails a Task with no egress whose agent attempts an outbound connection", func() {
