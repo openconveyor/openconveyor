@@ -472,6 +472,89 @@ var _ = Describe("Task Controller", func() {
 		})
 	})
 
+	Context("egress re-resolution — hostnames are re-resolved while the Task runs", func() {
+		const refresh = 30 * time.Second
+
+		refreshing := func(hosts map[string][]string) *TaskReconciler {
+			r := reconciler()
+			r.EgressRefreshInterval = refresh
+			r.Resolver = policy.StaticResolver{Hosts: hosts}
+			return r
+		}
+		resolvedCIDRs := func() []string {
+			var np networkingv1.NetworkPolicy
+			ExpectWithOffset(1, k8sClient.Get(ctx, taskKey, &np)).To(Succeed())
+			var out []string
+			for _, rule := range np.Spec.Egress {
+				for _, peer := range rule.To {
+					if peer.IPBlock != nil {
+						out = append(out, peer.IPBlock.CIDR)
+					}
+				}
+			}
+			return out
+		}
+
+		It("requeues after the refresh interval while a hostname is allowlisted", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("api.example.com")))).To(Succeed())
+			res, err := refreshing(map[string][]string{"api.example.com": {"203.0.113.10"}}).
+				Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(Equal(refresh))
+		})
+
+		It("patches the NetworkPolicy when the resolved set changes", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("api.example.com")))).To(Succeed())
+			_, err := refreshing(map[string][]string{"api.example.com": {"203.0.113.10"}}).
+				Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resolvedCIDRs()).To(ConsistOf("203.0.113.10/32"))
+
+			By("re-reconciling after the DNS record moved")
+			_, err = refreshing(map[string][]string{"api.example.com": {"203.0.113.20", "203.0.113.21"}}).
+				Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resolvedCIDRs()).To(ConsistOf("203.0.113.20/32", "203.0.113.21/32"))
+		})
+
+		It("does not requeue when the allowlist has no hostnames", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("10.0.0.0/8", "203.0.113.5")))).To(Succeed())
+			res, err := refreshing(nil).Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeZero())
+		})
+
+		It("does not requeue when the refresh interval is disabled", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("api.example.com")))).To(Succeed())
+			res, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeZero())
+		})
+
+		It("stops requeueing once the Task is terminal", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("api.example.com")))).To(Succeed())
+			r := refreshing(map[string][]string{"api.example.com": {"203.0.113.10"}})
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("failing the Job")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Failed = 1
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+				batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeZero(), "the reconcile that reaches a terminal phase must not schedule another")
+		})
+	})
+
 	Context("prompt projection — inline prompts go through an owned ConfigMap", func() {
 		const (
 			promptAgentName = "prompt-reader"

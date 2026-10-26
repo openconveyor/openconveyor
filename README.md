@@ -145,6 +145,10 @@ Webhook trigger adapter (optional, enables external triggers):
 conveyor --trigger-bind-address=:9090 --trigger-namespace=conveyor-system
 ```
 
+Egress hostnames are re-resolved while a Task runs so NetworkPolicies
+follow DNS changes; tune or disable with `--egress-refresh-interval`
+(default `5m`, `0` disables).
+
 ## Examples
 
 | Example | Trigger | What it proves |
