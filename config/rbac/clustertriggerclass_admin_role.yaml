@@ -19,9 +19,3 @@ rules:
   - clustertriggerclasses
   verbs:
   - '*'
-- apiGroups:
-  - openconveyor.ai
-  resources:
-  - clustertriggerclasses/status
-  verbs:
-  - get

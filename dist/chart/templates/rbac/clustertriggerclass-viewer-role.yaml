@@ -17,10 +17,4 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - openconveyor.ai
-  resources:
-  - clustertriggerclasses/status
-  verbs:
-  - get
 {{- end }}

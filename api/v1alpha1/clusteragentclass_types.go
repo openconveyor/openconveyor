@@ -100,20 +100,14 @@ type ClusterAgentClassSpec struct {
 	Requires AgentRequirements `json:"requires,omitempty"`
 }
 
-// ClusterAgentClassStatus is minimal by design. The controller reads a
-// ClusterAgentClass as configuration and does not reconcile it.
-type ClusterAgentClassStatus struct {
-	// +optional
-	// +listType=map
-	// +listMapKey=type
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-}
-
 // +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.image`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// ClusterAgentClass is the Schema for the clusteragentclasses API
+// ClusterAgentClass is the Schema for the clusteragentclasses API. The
+// controller reads a ClusterAgentClass as configuration and does not
+// reconcile it, so the type has no status.
 type ClusterAgentClass struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -124,10 +118,6 @@ type ClusterAgentClass struct {
 	// spec defines the desired state of ClusterAgentClass
 	// +required
 	Spec ClusterAgentClassSpec `json:"spec"`
-
-	// status defines the observed state of ClusterAgentClass
-	// +optional
-	Status ClusterAgentClassStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true

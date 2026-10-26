@@ -21,9 +21,3 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - openconveyor.ai
-  resources:
-  - clusteragentclasses/status
-  verbs:
-  - get

@@ -19,9 +19,3 @@ rules:
   - clusteragentclasses
   verbs:
   - '*'
-- apiGroups:
-  - openconveyor.ai
-  resources:
-  - clusteragentclasses/status
-  verbs:
-  - get
