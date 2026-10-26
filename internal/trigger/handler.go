@@ -27,25 +27,25 @@ import (
 )
 
 // maxBodyBytes caps inbound webhook payloads. 1 MiB covers everything
-// the GitHub / GitLab / Linear webhooks send in practice and keeps a
-// misbehaving (or malicious) source from exhausting memory.
+// that the GitHub, GitLab and Linear webhooks send in practice. The cap
+// also prevents a misbehaving or malicious source from exhausting memory.
 const maxBodyBytes = 1 << 20
 
-// Handler answers webhook POSTs by looking up a matching
-// ClusterTriggerClass, verifying the HMAC signature with the referenced
-// Secret, and materialising a Task from the mapped payload.
+// Handler answers webhook POSTs. It looks up a matching ClusterTriggerClass,
+// verifies the HMAC signature with the referenced Secret, and creates a
+// Task from the mapped payload.
 //
-// One Handler per process; routes are discovered dynamically from the
-// cluster so new ClusterTriggerClass objects take effect without a restart.
-// The Client is expected to be cache-backed (mgr.GetClient()) so
+// Each process has one Handler. The Handler discovers routes dynamically
+// from the cluster, so a new ClusterTriggerClass takes effect without a
+// restart. The Client must be cache-backed (mgr.GetClient()), so
 // ClusterTriggerClass reads during high-volume webhook bursts stay
-// in-process. Secret reads bypass the cache (see cmd/main.go) so the
-// manager never opens a cluster-wide Secret watch; HMAC key lookups are
+// in-process. Secret reads bypass the cache (see cmd/main.go), so the
+// manager never opens a cluster-wide Secret watch. HMAC key lookups are
 // low-volume live reads.
 type Handler struct {
 	Client client.Client
-	// SecretNamespace is where the HMAC Secrets referenced by
-	// ClusterTriggerClasses live (usually the adapter's own namespace).
+	// SecretNamespace is the namespace of the HMAC Secrets that
+	// ClusterTriggerClasses reference. It is usually the namespace of the adapter.
 	SecretNamespace string
 	// DefaultTaskNamespace receives emitted Tasks whose template leaves
 	// the namespace unset.
@@ -125,8 +125,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	header := r.Header.Get(ctc.Spec.Signature.Header)
 	if err := VerifyHMAC(ctc.Spec.Signature.Algorithm, ctc.Spec.Signature.Prefix, header, secret, body); err != nil {
-		// An empty secret or unsupported algorithm is the operator's
-		// misconfiguration, not a caller auth failure — 500, not 401.
+		// An empty secret or an unsupported algorithm is a misconfiguration by
+		// the operator, not an auth failure by the caller: 500, not 401.
 		if errors.Is(err, ErrEmptySecret) || errors.Is(err, ErrUnsupportedAlgorithm) {
 			h.Log.Error(err, "Signature configuration is invalid", "triggerClass", ctc.Name)
 			metrics.ObserveWebhook(ctc.Name, metrics.ResultError)
@@ -151,9 +151,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusBadRequest, "build task: "+err.Error())
 		return
 	}
-	// Default the emitted Task's namespace when the template left it
-	// unset — avoids accidentally dumping Tasks into "default" on
-	// clusters where that namespace is unused.
+	// Set the namespace of the emitted Task when the template left it
+	// unset. This prevents Tasks in "default" on clusters where that
+	// namespace is not in use.
 	if task.Namespace == "" {
 		task.Namespace = h.DefaultTaskNamespace
 	}
@@ -171,8 +171,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // findTriggerClass looks up the ClusterTriggerClass whose spec.path
-// matches the request path exactly. Ambiguous paths (two CTCs with the
-// same path) are rejected — easier to fix the config than to guess.
+// matches the request path exactly. The function rejects an ambiguous
+// path, that is two CTCs with the same path. A config fix is easier than
+// a guess.
 func (h *Handler) findTriggerClass(ctx context.Context, path string) (*conveyorv1alpha1.ClusterTriggerClass, error) {
 	path = strings.TrimRight(path, "/")
 	if path == "" {

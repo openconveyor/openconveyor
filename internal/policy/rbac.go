@@ -13,14 +13,14 @@ import (
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 )
 
-// BuildRole returns a namespaced Role carrying the verbs the Task declared,
-// or nil if the Task asked for nothing. Nil means the caller should delete
-// any prior Role + RoleBinding for this Task so a rolled-back spec cannot
-// leave permissions behind.
+// BuildRole returns a namespaced Role that carries the verbs the Task
+// declared, or nil if the Task declared no rules. Nil means the caller must
+// delete any previous Role and RoleBinding for this Task, so a rolled-back
+// spec cannot leave permissions behind.
 //
-// RBAC is opt-in: empty spec.permissions.rbac → no SA token, no Role.
-// Anything else flows through verbatim, with validation left to the API
-// server when the Role is applied.
+// RBAC is opt-in: an empty spec.permissions.rbac means no SA token and no
+// Role. The function copies all other rules verbatim. The API server
+// validates them when the controller applies the Role.
 func BuildRole(taskName, namespace string, rules []conveyorv1alpha1.RBACRule) *rbacv1.Role {
 	if len(rules) == 0 {
 		return nil
@@ -42,9 +42,9 @@ func BuildRole(taskName, namespace string, rules []conveyorv1alpha1.RBACRule) *r
 	}
 }
 
-// BuildRoleBinding ties the Task's ServiceAccount to its Role. Returns nil
-// if rules is empty — symmetric with BuildRole so both resources live or
-// die together.
+// BuildRoleBinding ties the ServiceAccount of the Task to its Role. It
+// returns nil if rules is empty, symmetric with BuildRole, so the controller
+// creates or deletes both resources together.
 func BuildRoleBinding(taskName, namespace string, rules []conveyorv1alpha1.RBACRule) *rbacv1.RoleBinding {
 	if len(rules) == 0 {
 		return nil
@@ -67,9 +67,10 @@ func BuildRoleBinding(taskName, namespace string, rules []conveyorv1alpha1.RBACR
 	}
 }
 
-// NeedsServiceAccountToken reports whether the Job should mount a token.
-// Baseline is false; declaring any RBAC rule flips it on. This is the
-// single source of truth so build.go and the policy package can't drift.
+// NeedsServiceAccountToken reports whether the Job mounts a token. The
+// baseline is false; any declared RBAC rule turns it on. This function is
+// the single source of truth, so build.go and the policy package cannot
+// drift apart.
 func NeedsServiceAccountToken(rules []conveyorv1alpha1.RBACRule) bool {
 	return len(rules) > 0
 }

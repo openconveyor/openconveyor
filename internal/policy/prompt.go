@@ -15,17 +15,17 @@ import (
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 )
 
-// PromptProjection is the volume/mount pair that delivers the Task's
-// prompt into the container. Zero value means the AgentClass does not
-// read a prompt.
+// PromptProjection is the volume and mount pair that delivers the prompt
+// of the Task into the container. The zero value means the AgentClass
+// does not read a prompt.
 type PromptProjection struct {
 	Volume *corev1.Volume
 	Mount  *corev1.VolumeMount
 }
 
-// PromptKey is the key used inside the owned ConfigMap when the Task's
-// prompt is inline. Kept as a named constant so the controller and any
-// future consumers agree on it.
+// PromptKey is the key inside the owned ConfigMap when the prompt of the
+// Task is inline. It is a named constant so the controller and future
+// consumers agree on it.
 const PromptKey = "prompt"
 
 // PromptVolumeName is the pod-level volume name that carries the prompt.
@@ -36,20 +36,22 @@ const PromptVolumeName = "prompt"
 const promptSuffix = "-prompt"
 
 // InlinePromptConfigMapName returns the name of the owned ConfigMap that
-// holds an inline prompt. Separate from the Task's main resource name so
-// it does not collide with the SA / Role / Job sharing `<task-name>`.
+// holds an inline prompt. The name differs from the main resource name of
+// the Task, so it does not collide with the SA, Role and Job that share
+// `<task-name>`.
 func InlinePromptConfigMapName(taskName string) string {
 	return taskName + promptSuffix
 }
 
-// BuildPromptProjection returns the volume and volume-mount that project
-// the Task's prompt into the agent container at the AgentClass-declared
-// mount path. Returns (nil, nil, nil) when the AgentClass does not
-// declare a prompt input — some agents (e.g. a cron reporter with its
-// prompt baked into the image) do not read a Task-supplied prompt.
+// BuildPromptProjection returns the volume and the volume mount that
+// project the prompt of the Task into the agent container. The mount path
+// is the one that the AgentClass declares. The function returns an empty
+// PromptProjection and no error when the AgentClass does not declare a
+// prompt input. Some agents, for example a cron reporter with its prompt
+// built into the image, do not read a prompt from the Task.
 //
-// The mount uses subPath so the target path is a single file rather
-// than a directory, letting the agent `cat $MOUNT` directly.
+// The mount uses subPath, so the target path is a single file and not a
+// directory. The agent can `cat $MOUNT` directly.
 //
 // Prompt sources map as follows:
 //
@@ -57,15 +59,15 @@ func InlinePromptConfigMapName(taskName string) string {
 //   - secretRef         → project from the referenced Secret (key preserved)
 //   - configMapRef      → project from the referenced ConfigMap (key preserved)
 //
-// Inline prompts rely on the caller having already created the owned
-// ConfigMap; this function only builds the projection metadata.
+// An inline prompt requires that the caller has already created the owned
+// ConfigMap. This function only builds the projection metadata.
 func BuildPromptProjection(
 	taskName string,
 	prompt conveyorv1alpha1.PromptSource,
 	inputs conveyorv1alpha1.AgentInputs,
 ) (PromptProjection, error) {
 	if inputs.Prompt == nil || inputs.Prompt.Mount == "" {
-		// Env-var delivery is not supported yet; documented in the type.
+		// The controller does not support env-var delivery yet. The type documents this.
 		return PromptProjection{}, nil
 	}
 
@@ -117,10 +119,10 @@ func BuildPromptProjection(
 	}, nil
 }
 
-// BuildInlinePromptConfigMap materialises the owned ConfigMap that holds
-// an inline prompt. Returns nil when the prompt is not inline — the
-// reconciler should then make sure no such ConfigMap lingers from a
-// prior state.
+// BuildInlinePromptConfigMap creates the owned ConfigMap that holds an
+// inline prompt. It returns nil when the prompt is not inline. The
+// reconciler must then make sure that no such ConfigMap remains from a
+// previous state.
 func BuildInlinePromptConfigMap(taskName, namespace string, prompt conveyorv1alpha1.PromptSource) *corev1.ConfigMap {
 	if prompt.Inline == "" {
 		return nil

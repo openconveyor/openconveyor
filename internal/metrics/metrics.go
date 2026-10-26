@@ -9,8 +9,8 @@ you may not use this file except in compliance with the License.
 // metrics against controller-runtime's shared registry. The manager's
 // built-in metrics server (see cmd/main.go) serves them at /metrics.
 //
-// All counters/histograms are package-level so callers just import the
-// package and call the typed helpers — no handle to pass around.
+// All counters and histograms are package-level, so callers import the
+// package and call the typed helpers. There is no handle to pass around.
 package metrics
 
 import (
@@ -21,10 +21,10 @@ import (
 
 const (
 	// ResultAccepted means the webhook matched a ClusterTriggerClass, passed
-	// signature + filters, and a Task was created.
+	// the signature check and the filters, and the handler created a Task.
 	ResultAccepted = "accepted"
-	// ResultFiltered means the request matched a CTC and signature was valid
-	// but filters excluded it — explicitly not an error.
+	// ResultFiltered means the request matched a CTC with a valid signature,
+	// but the filters excluded it. This is not an error.
 	ResultFiltered = "filtered"
 	// ResultRejectedSignature covers missing or mismatched HMAC.
 	ResultRejectedSignature = "rejected_signature"
@@ -38,7 +38,7 @@ const (
 	ResultNotFound = "not_found"
 	// ResultBuildFailed means mappings could not produce a valid Task.
 	ResultBuildFailed = "build_failed"
-	// ResultError is any server-side failure (apiserver create, lookup, …).
+	// ResultError is any server-side failure (apiserver create, lookup, and more).
 	ResultError = "error"
 )
 
@@ -69,10 +69,10 @@ const (
 
 var (
 	// TaskPhaseTransitions counts every observed phase change. A Task that
-	// goes Pending → Running → Completed contributes three increments (one
-	// per transition). Labels:
+	// goes Pending → Running → Completed contributes three increments, one
+	// per transition. Labels:
 	//   - phase:  the new phase (Pending/Running/Completed/Failed/TimedOut)
-	//   - reason: the condition reason driving the transition
+	//   - reason: the condition reason that drives the transition
 	TaskPhaseTransitions = promauto.With(ctrlmetrics.Registry).NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "conveyor_task_phase_transitions_total",

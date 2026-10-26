@@ -20,30 +20,30 @@ import (
 )
 
 // Server is a manager.Runnable that binds an HTTP listener and serves
-// webhook traffic through Handler. controller-runtime's manager calls
-// Start(ctx); we shut the listener down when ctx is cancelled so the
-// server lifecycle tracks the manager's.
+// webhook traffic through Handler. The controller-runtime manager calls
+// Start(ctx). The Server shuts the listener down when the manager cancels
+// ctx, so the server lifecycle tracks the manager lifecycle.
 type Server struct {
 	Addr    string
 	Handler *Handler
 	Log     logr.Logger
 }
 
-// The LeaderElectionRunnable assert matters most: NeedLeaderElection is
-// duck-typed, so a signature typo would silently gate the server behind
-// leader election instead of failing to compile.
+// The LeaderElectionRunnable assert matters most. NeedLeaderElection is
+// duck-typed. Without the assert, a signature typo silently gates the
+// server behind leader election instead of causing a compile error.
 var (
 	_ manager.Runnable               = (*Server)(nil)
 	_ manager.LeaderElectionRunnable = (*Server)(nil)
 )
 
 // NeedLeaderElection tells controller-runtime to run the trigger server
-// on every replica, not just the leader. Webhook traffic balanced by a
-// Service should reach whichever replica answered DNS; the Tasks it
-// creates are the reconciler's concern (which is leader-gated).
+// on every replica, not only on the leader. A Service balances the webhook
+// traffic, and the traffic reaches the replica that answered DNS. The
+// leader-gated reconciler handles the Tasks that the server creates.
 func (s *Server) NeedLeaderElection() bool { return false }
 
-// Start serves requests until ctx is cancelled.
+// Start serves requests until the manager cancels ctx.
 func (s *Server) Start(ctx context.Context) error {
 	if s.Handler == nil {
 		return errors.New("trigger server: Handler is nil")
