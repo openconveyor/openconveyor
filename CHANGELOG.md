@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API:** `kubectl get clusteragentclasses` shows an `Image` column
   (`.spec.image`) and `kubectl get clustertriggerclasses` shows a `Path`
   column (`.spec.path`), before `Age`. (#18)
+- **Docs:** `GLOSSARY.md` defines **Reference agent**: one of the three
+  agent images this repo ships (implementer, reviewer, reporter), a
+  worked example of the agent contract and not the only agent that can
+  run. (#27)
 - **Docs:** `docs/status-reference.md` lists every Task phase, the `Ready`
   condition's closed reason set with status and message, the other status
   fields, the Events that mirror them and how to consume them; linked from
@@ -83,6 +87,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Docs:** `docs/plugin-authoring.md` is rewritten against the real
+  `ClusterAgentClass`, `ClusterTriggerClass` and `Task` schemas: the
+  `{from, to, default}` mapping list of the webhook adapter (no
+  templating), the HMAC signature fields, the config projection rules,
+  and the environment-variable contract of the three reference agents
+  (`ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `GIT_HOST`, `TARGET_REPO`,
+  `TARGET_BRANCH`, `PR_URL`, `REVIEW_EVENT`, `REPORT_ISSUE_URL`, …) as
+  `agents/*/entrypoint.sh` implements it. The "planned" archetype table
+  and the Phase labels are gone; all three archetypes and five examples
+  ship. (#27)
 - **Docs:** all prose follows ASD-STE100 Simplified Technical English:
   the README (rewritten), the guides, the ADRs (decisions unchanged), the
   Go doc comments, and the comments in the agent images and sample YAML

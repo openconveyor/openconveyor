@@ -125,4 +125,5 @@ API, never the controller directly:
   with the right code." Each other behavior is specific to the agent.
 
 By design, a new trigger or a new agent never requires a change in
-`internal/`.
+`internal/`. [`plugin-authoring.md`](plugin-authoring.md) describes
+both contracts and the reference agents.
