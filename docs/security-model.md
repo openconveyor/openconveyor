@@ -22,12 +22,15 @@ allowlist entry; the DNS rule keeps port 53 regardless. There is no
 "all ports" setting. Ports are a separate field rather than a `:port`
 suffix on entries because IPv6 CIDRs contain colons.
 
-Hostnames are resolved to IPs at reconcile time. That is a snapshot:
-if an allowlisted hostname's DNS record changes after the Task is
-created, the pod keeps talking to the old IPs until the Task is
-re-created. For FQDN-level enforcement install Cilium and swap the
-policy generator for `CiliumNetworkPolicy` — that is the documented
-upgrade path.
+Hostnames are resolved to IPs at reconcile time. That is a snapshot,
+and CDN/anycast records rotate, so while a Task with hostnames in its
+allowlist is not terminal the controller re-resolves them every
+`--egress-refresh-interval` (default `5m`, `0` disables) and updates
+the NetworkPolicy when the set changed. Between refreshes the pod
+keeps talking to the previous IPs; connections to an IP that left the
+set are cut when the policy updates. For FQDN-level enforcement
+install Cilium and swap the policy generator for
+`CiliumNetworkPolicy` — that is the documented upgrade path.
 
 See `internal/policy/networkpolicy.go` and the Phase 2 envtest in
 `internal/controller/task_controller_test.go`.

@@ -253,6 +253,32 @@ func collectAllowlistPorts(np *networkingv1.NetworkPolicy) []string {
 	return out
 }
 
+// TestHasHostnames pins the predicate the controller uses to decide
+// whether an egress allowlist needs periodic re-resolution (#25): only
+// DNS names drift; IPs and CIDRs are stable.
+func TestHasHostnames(t *testing.T) {
+	tests := []struct {
+		name   string
+		egress []string
+		want   bool
+	}{
+		{"empty", nil, false},
+		{"cidr only", []string{"10.0.0.0/8"}, false},
+		{"ipv4 only", []string{"203.0.113.5"}, false},
+		{"ipv6 only", []string{"2001:db8::5"}, false},
+		{"hostname", []string{"api.example.com"}, true},
+		{"mixed", []string{"10.0.0.0/8", "api.example.com"}, true},
+		{"blank entries ignored", []string{" ", ""}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HasHostnames(tc.egress); got != tc.want {
+				t.Errorf("HasHostnames(%v) = %v, want %v", tc.egress, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildNetworkPolicy_PodSelectorBindsToTask(t *testing.T) {
 	np, err := BuildNetworkPolicy(context.Background(), StaticResolver{}, "demo-task", "ns", nil, nil)
 	if err != nil {

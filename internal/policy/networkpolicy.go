@@ -134,6 +134,20 @@ func BuildNetworkPolicy(
 	}, nil
 }
 
+// HasHostnames reports whether any allowlist entry is a DNS name rather
+// than an IP or CIDR. Only names drift, so only Tasks with names need
+// their NetworkPolicy re-resolved while they run.
+func HasHostnames(egress []string) bool {
+	for _, entry := range egress {
+		entry = strings.TrimSpace(entry)
+		if entry == "" || strings.Contains(entry, "/") || net.ParseIP(entry) != nil {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // resolveEgress normalises each entry in the allowlist to a CIDR string.
 //
 //   - Exact CIDR (contains "/") is passed through after parse validation.

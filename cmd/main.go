@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -76,7 +77,13 @@ type flags struct {
 	enableHTTP2          bool
 	triggerAddr          string
 	triggerNamespace     string
+	egressRefresh        time.Duration
 }
+
+// defaultEgressRefresh bounds how long a Task's NetworkPolicy can lag a
+// DNS change. Five minutes is well under typical CDN TTL churn and keeps
+// the per-Task reconcile rate negligible.
+const defaultEgressRefresh = 5 * time.Minute
 
 func parseFlags() (flags, zap.Options) {
 	var fl flags
@@ -102,6 +109,9 @@ func parseFlags() (flags, zap.Options) {
 	flag.StringVar(&fl.triggerNamespace, "trigger-namespace", "",
 		"Namespace where HMAC Secrets referenced by ClusterTriggerClass live. "+
 			"Defaults to POD_NAMESPACE or \""+defaultTriggerNamespace+"\".")
+	flag.DurationVar(&fl.egressRefresh, "egress-refresh-interval", defaultEgressRefresh,
+		"How often a running Task whose egress allowlist contains hostnames is re-resolved "+
+			"and its NetworkPolicy updated. 0 disables re-resolution.")
 
 	// Production JSON logging by default; --zap-devel restores the
 	// development encoder for local runs.
@@ -253,8 +263,9 @@ func run() error {
 	ctx := ctrl.SetupSignalHandler()
 
 	if err := (&controller.TaskReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:                mgr.GetClient(),
+		Scheme:                mgr.GetScheme(),
+		EgressRefreshInterval: fl.egressRefresh,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		return fmt.Errorf("create Task controller: %w", err)
 	}

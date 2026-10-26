@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Controller:** hostnames in a Task's egress allowlist are re-resolved
+  while the Task is not terminal and the NetworkPolicy is updated when the
+  resolved IPs change, so CDN/anycast rotation no longer silently breaks
+  or over-permits egress mid-run. The interval is the new
+  `--egress-refresh-interval` flag (default `5m`; `0` disables). Tasks
+  whose allowlist has only IPs/CIDRs are not requeued. (#25)
 - **API:** `spec.permissions.egressPorts` on `Task` (and on the Task
   template of `ClusterTriggerClass`): up to 16 distinct ports in 1–65535,
   applied to every egress allowlist entry; unset means `[443]`. (#24)

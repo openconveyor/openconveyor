@@ -51,6 +51,11 @@ type TaskReconciler struct {
 	// Recorder publishes Events on the Task so phase transitions and
 	// failures show up in `kubectl describe task`. Nil means no Events.
 	Recorder events.EventRecorder
+	// EgressRefreshInterval is how often a non-terminal Task whose egress
+	// allowlist contains hostnames is reconciled again so the resolved
+	// IPs in its NetworkPolicy follow DNS changes. Zero disables the
+	// periodic re-resolution (the snapshot taken at creation stands).
+	EgressRefreshInterval time.Duration
 }
 
 var _ reconcile.Reconciler = (*TaskReconciler)(nil)
@@ -161,6 +166,12 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
+	// Hostnames were resolved to a snapshot above; CDN and anycast
+	// records rotate, so come back on an interval while the Task is
+	// alive and let ensureNetworkPolicy patch in the current set.
+	if r.EgressRefreshInterval > 0 && !isTerminal(task.Status.Phase) && policy.HasHostnames(effectiveEgress) {
+		return ctrl.Result{RequeueAfter: r.EgressRefreshInterval}, nil
+	}
 	return ctrl.Result{}, nil
 }
 
