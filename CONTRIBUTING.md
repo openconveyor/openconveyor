@@ -19,6 +19,7 @@ welcome issues, design critique, and PRs.
 ```sh
 make test          # unit + envtest integration tests
 make lint          # golangci-lint with the repo's custom linter plugin
+make lint-docs     # Vale: Simplified Technical English rules, warnings only
 make manifests     # regenerate CRDs and RBAC after editing *_types.go
 make generate      # regenerate DeepCopy methods
 make run           # run the controller against your current kubeconfig
@@ -39,6 +40,9 @@ A dev container is provided in `.devcontainer/` for VS Code users.
   relevant default, update `docs/security-model.md` in the same PR.
 - Do not commit generated code by hand. Run `make manifests generate`
   and commit the diff.
+- Write prose in Simplified Technical English. See
+  [`docs/writing-style.md`](docs/writing-style.md) and run
+  `make lint-docs`.
 
 ## Reporting bugs
 

@@ -52,6 +52,6 @@ If your output contradicts an existing ADR, surface it explicitly rather than si
 
 ## This repo
 
-Single-context layout. `GLOSSARY.md` does not exist yet; it is created lazily by `/domain-modeling` the first time a term actually gets resolved. Do not create it upfront.
+Single-context layout. `GLOSSARY.md` is at the repository root. Use its terms and do not use the words in its `_Avoid_` lists. Prose follows `docs/writing-style.md`.
 
 ADRs live in `docs/adr/`. That directory's `README.md` defines the local conventions (four-digit numbering, Proposed → Accepted → Superseded lifecycle, and the index table that every new ADR must be added to). Follow it rather than the generic layout above when recording a decision.

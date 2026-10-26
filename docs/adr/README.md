@@ -57,3 +57,4 @@ minutes.
 | [0004](0004-secrets-as-files.md) | Project secrets as files, never as env vars | Accepted |
 | [0005](0005-default-deny-with-empty-egress.md) | Empty `permissions.egress` means deny-all — no implicit DNS | Accepted |
 | [0006](0006-webhook-adapter-trust-boundary.md) | Webhook adapter trust boundary — HMAC, capped body, namespace-local secrets | Accepted |
+| [0007](0007-simplified-technical-english.md) | Write all prose in Simplified Technical English | Accepted |

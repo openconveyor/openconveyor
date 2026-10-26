@@ -98,6 +98,9 @@ system-wide.
   or `PROJECT`.
 - If a change alters a security default, update
   `docs/security-model.md` in the same PR.
+- Prose (Markdown, Go comments, sample and agent-image comments)
+  follows Simplified Technical English: see `docs/writing-style.md`.
+  `make lint-docs` checks it (warnings only).
 
 ## Agent skills
 
