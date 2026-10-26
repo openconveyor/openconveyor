@@ -23,7 +23,7 @@ internal/controller/<group>/*          Controllers by group
 internal/webhook/<group>/<version>/*   Webhooks by group and version (if present)
 ```
 
-Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check the `PROJECT` file for `multigroup: true`.
+The multi-group layout organizes APIs by group name (for example, `batch`, `apps`). Check the `PROJECT` file for `multigroup: true`.
 
 **To convert to multi-group layout:**
 1. Run: `kubebuilder edit --multigroup=true`
@@ -31,8 +31,8 @@ Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check t
 3. Move controllers: `mkdir -p internal/controller/<group> && mv internal/controller/*.go internal/controller/<group>/`
 4. Move webhooks (if present): `mkdir -p internal/webhook/<group> && mv internal/webhook/<version> internal/webhook/<group>/`
 5. Update import paths in all files
-6. Fix `path` in `PROJECT` file for each resource
-7. Update test suite CRD paths (add one more `..` to relative paths)
+6. Fix `path` in the `PROJECT` file for each resource
+7. Update the CRD paths in the test suite (add one more `..` to the relative paths)
 
 ## Critical Rules
 
@@ -44,20 +44,20 @@ Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check t
 - `PROJECT` - from `kubebuilder [OPTIONS]`
 
 ### Never Remove Scaffold Markers
-Do NOT delete `// +kubebuilder:scaffold:*` comments. CLI injects code at these markers.
+Do NOT delete the `// +kubebuilder:scaffold:*` comments. The CLI injects code at these markers.
 
 ### Keep Project Structure
-Do not move files around. The CLI expects files in specific locations.
+Do not move files. The CLI expects the files in specific locations.
 
 ### Always Use CLI Commands
-Always use `kubebuilder create api` and `kubebuilder create webhook` to scaffold. Do NOT create files manually.
+Always use `kubebuilder create api` and `kubebuilder create webhook` to scaffold. Do NOT create the files manually.
 
 ### Write Prose in Simplified Technical English
 All Markdown and all Go comments follow `docs/writing-style.md` (ASD-STE100). Run `make lint-docs` before you open a PR.
 
 ### E2E Tests Require an Isolated Kind Cluster
-The e2e tests are designed to validate the solution in an isolated environment (similar to GitHub Actions CI).
-Ensure you run them against a dedicated [Kind](https://kind.sigs.k8s.io/) cluster (not your “real” dev/prod cluster).
+The e2e tests validate the solution in an isolated environment (similar to GitHub Actions CI).
+Run them against a dedicated [Kind](https://kind.sigs.k8s.io/) cluster, not your “real” dev or prod cluster.
 
 ## After Making Changes
 
@@ -82,7 +82,7 @@ kubebuilder create api --group <group> --version <version> --kind <Kind>
 
 ### Deploy Image Plugin (scaffold to deploy/manage ANY container image)
 
-Generate a controller that deploys and manages a container image (nginx, redis, memcached, your app, etc.):
+Generate a controller that deploys and manages a container image (for example nginx, redis, memcached, or your app):
 
 ```bash
 # Example: deploying memcached
@@ -91,7 +91,7 @@ kubebuilder create api --group example.com --version v1alpha1 --kind Memcached \
   --plugins=deploy-image.go.kubebuilder.io/v1-alpha
 ```
 
-Scaffolds good-practice code: reconciliation logic, status conditions, finalizers, RBAC. Use as a reference implementation.
+The plugin scaffolds good-practice code: reconciliation logic, status conditions, finalizers, RBAC. Use it as a reference implementation.
 
 
 ### Create Webhooks
@@ -116,9 +116,11 @@ kubebuilder create api --group apps --version v1 --kind Deployment \
   --controller=true --resource=false
 ```
 
+<!-- vale STE.Latin = NO -->
 ### Controller for External Types (e.g., from other operators)
+<!-- vale STE.Latin = YES -->
 
-Watch resources from external APIs (cert-manager, Argo CD, Istio, etc.):
+Watch resources from external APIs (for example cert-manager, Argo CD, or Istio):
 
 ```bash
 # Example: watching cert-manager Certificate resources
@@ -130,7 +132,7 @@ kubebuilder create api \
   --external-api-module=github.com/cert-manager/cert-manager
 ```
 
-**Note:** Use `--external-api-module=<module>@<version>` only if you need a specific version. Otherwise, omit `@<version>` to use what's in go.mod.
+**Note:** Use `--external-api-module=<module>@<version>` only if you need a specific version. Otherwise, omit `@<version>` to use the version in go.mod.
 
 ### Webhook for External Types
 
@@ -151,7 +153,7 @@ make test              # Run unit tests (uses envtest: real K8s API + etcd)
 make run               # Run locally (uses current kubeconfig context)
 ```
 
-Tests use **Ginkgo + Gomega** (BDD style). Check `suite_test.go` for setup.
+Tests use **Ginkgo + Gomega** (BDD style). Check `suite_test.go` for the setup.
 
 ## Deployment Workflow
 
@@ -206,18 +208,18 @@ kubectl logs -n <project>-system deployment/<project>-controller-manager -c mana
 ```
 
 **Implementation rules:**
-- **Idempotent reconciliation**: Safe to run multiple times
-- **Re-fetch before updates**: `r.Get(ctx, req.NamespacedName, obj)` before `r.Update` to avoid conflicts
+- **Idempotent reconciliation**: The reconcile loop is safe to run multiple times
+- **Re-fetch before updates**: Call `r.Get(ctx, req.NamespacedName, obj)` before `r.Update` to avoid conflicts
 - **Structured logging**: `log := log.FromContext(ctx); log.Info("msg", "key", val)`
 - **Owner references**: Enable automatic garbage collection (`SetControllerReference`)
-- **Watch secondary resources**: Use `.Owns()` or `.Watches()`, not just `RequeueAfter`
+- **Watch secondary resources**: Use `.Owns()` or `.Watches()`, not only `RequeueAfter`
 - **Finalizers**: Clean up external resources (buckets, VMs, DNS entries)
 
 ### Logging
 
 **Follow Kubernetes logging message style guidelines:**
 
-- Start from a capital letter
+- Start with a capital letter
 - Do not end the message with a period
 - Active voice: subject present (`"Deployment could not create Pod"`) or omitted (`"Could not create Pod"`)
 - Past tense: `"Could not delete Pod"` not `"Cannot delete Pod"`
@@ -234,22 +236,22 @@ log.Error(err, "Failed to create Pod", "name", name)
 
 ### Webhooks
 - **Create all types together**: `--defaulting --programmatic-validation --conversion`
-- **When`--force`is used**: Backup custom logic first, then restore after scaffolding
+- **When you use `--force`**: Back up the custom logic first, then restore it after scaffolding
 - **For multi-version APIs**: Use hub-and-spoke pattern (`--conversion --spoke v2`)
-  - Hub version: Usually oldest stable version (v1)
-  - Spoke versions: Newer versions that convert to/from hub (v2, v3)
+  - Hub version: Usually the oldest stable version (v1)
+  - Spoke versions: Newer versions that convert to and from the hub (v2, v3)
   - Example: `--group crew --version v1 --kind Captain --conversion --spoke v2` (v1 is hub, v2 is spoke)
 
 ### Learning from Examples
 
-The **deploy-image plugin** scaffolds a complete controller following good practices. Use it as a reference implementation:
+The **deploy-image plugin** scaffolds a complete controller that follows good practices. Use it as a reference implementation:
 
 ```bash
 kubebuilder create api --group example --version v1alpha1 --kind MyApp \
   --image=<your-image> --plugins=deploy-image.go.kubebuilder.io/v1-alpha
 ```
 
-Generated code includes: status conditions (`metav1.Condition`), finalizers, owner references, events, idempotent reconciliation.
+The generated code includes: status conditions (`metav1.Condition`), finalizers, owner references, events, idempotent reconciliation.
 
 ## Distribution Options
 
@@ -261,9 +263,9 @@ make build-installer IMG=<registry>/<project>:tag
 ```
 
 **Key points:**
-- The `dist/install.yaml` is generated from Kustomize manifests (CRDs, RBAC, Deployment)
+- `make build-installer` generates `dist/install.yaml` from the Kustomize manifests (CRDs, RBAC, Deployment)
 - Commit this file to your repository for easy distribution
-- Users only need `kubectl` to install (no additional tools required)
+- Users need only `kubectl` to install (no additional tools required)
 
 **Example:** Users install with a single command:
 ```bash
@@ -292,10 +294,10 @@ make helm-rollback                                       # Rollback to previous 
 helm install my-release ./<output-dir>/chart/ --namespace <ns> --create-namespace
 ```
 
-**Important:** If you add webhooks or modify manifests after initial chart generation:
-1. Backup any customizations in `<output-dir>/chart/values.yaml` and `<output-dir>/chart/manager/manager.yaml`
-2. Re-run: `kubebuilder edit --plugins=helm/v2-alpha --force` (use same `--output-dir` if customized)
-3. Manually restore your custom values from the backup
+**Important:** If you add webhooks or modify manifests after the initial chart generation:
+1. Back up any customizations in `<output-dir>/chart/values.yaml` and `<output-dir>/chart/manager/manager.yaml`
+2. Re-run: `kubebuilder edit --plugins=helm/v2-alpha --force` (use the same `--output-dir` if you customized it)
+3. Restore your custom values from the backup manually
 
 ### Publish Container Image
 
@@ -309,7 +311,7 @@ make docker-build docker-push IMG=$IMG
 ### Essential Reading
 - **Kubebuilder Book**: https://book.kubebuilder.io (comprehensive guide)
 - **controller-runtime FAQ**: https://github.com/kubernetes-sigs/controller-runtime/blob/main/FAQ.md (common patterns and questions)
-- **Good Practices**: https://book.kubebuilder.io/reference/good-practices.html (why reconciliation is idempotent, status conditions, etc.)
+- **Good Practices**: https://book.kubebuilder.io/reference/good-practices.html (why reconciliation is idempotent, status conditions, and more)
 - **Logging Conventions**: https://github.com/kubernetes/community/blob/master/contributors/devel/sig-instrumentation/logging.md#message-style-guidelines (message style, verbosity levels)
 
 ### API Design & Implementation

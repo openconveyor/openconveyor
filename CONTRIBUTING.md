@@ -1,18 +1,18 @@
 # Contributing to OpenConveyor
 
-Thanks for your interest in OpenConveyor. The project is in alpha — we
+Thank you for your interest in OpenConveyor. The project is in alpha. We
 welcome issues, design critique, and PRs.
 
 ## Before you start
 
-- Read [`docs/architecture.md`](docs/architecture.md) for how the
-  operator is wired, and [`docs/security-model.md`](docs/security-model.md)
-  for the guarantees the project has to preserve.
+- Read [`docs/architecture.md`](docs/architecture.md) to learn how the
+  parts of the operator connect, and [`docs/security-model.md`](docs/security-model.md)
+  for the guarantees that the project must preserve.
 - Check the [`docs/adr/`](docs/adr/) directory. If your change
-  argues against an accepted ADR, please open a PR that supersedes
-  it rather than silently diverging.
-- [`AGENTS.md`](AGENTS.md) documents the Kubebuilder conventions this
-  repository follows — do not hand-edit generated files.
+  argues against an accepted ADR, open a PR that supersedes the ADR.
+  Do not diverge from it in silence.
+- [`AGENTS.md`](AGENTS.md) documents the Kubebuilder conventions that this
+  repository follows. Do not hand-edit generated files.
 
 ## Local development
 
@@ -25,7 +25,7 @@ make generate      # regenerate DeepCopy methods
 make run           # run the controller against your current kubeconfig
 ```
 
-A dev container is provided in `.devcontainer/` for VS Code users.
+The `.devcontainer/` directory contains a dev container for VS Code users.
 
 ## Pull requests
 
@@ -36,9 +36,9 @@ A dev container is provided in `.devcontainer/` for VS Code users.
 - Include tests. The envtest suite under
   `internal/controller/*_test.go` and the unit suites under
   `internal/policy/` and `internal/trigger/` are the models.
-- Update docs when behaviour changes. If you change a security-
-  relevant default, update `docs/security-model.md` in the same PR.
-- Do not commit generated code by hand. Run `make manifests generate`
+- Update the docs when the behavior changes. If you change a
+  security-relevant default, update `docs/security-model.md` in the same PR.
+- Do not write generated code by hand. Run `make manifests generate`
   and commit the diff.
 - Write prose in Simplified Technical English. See
   [`docs/writing-style.md`](docs/writing-style.md) and run
@@ -46,10 +46,10 @@ A dev container is provided in `.devcontainer/` for VS Code users.
 
 ## Reporting bugs
 
-Open a GitHub issue using the bug-report template. For vulnerabilities,
-do not open a public issue — follow [`SECURITY.md`](SECURITY.md).
+Open a GitHub issue with the bug-report template. For a vulnerability,
+do not open a public issue. Follow [`SECURITY.md`](SECURITY.md).
 
 ## Code of conduct
 
-Participation in this project is governed by the
-[Contributor Covenant](CODE_OF_CONDUCT.md).
+The [Contributor Covenant](CODE_OF_CONDUCT.md) governs participation in
+this project.

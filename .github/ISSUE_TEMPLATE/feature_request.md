@@ -7,21 +7,21 @@ labels: ["enhancement", "needs-triage"]
 
 ## Problem
 
-<!-- What use case isn't served today? Be concrete. -->
+<!-- Which use case does OpenConveyor not serve today? Be specific. -->
 
 ## Proposed solution
 
-<!-- How would you like OpenConveyor to behave? -->
+<!-- Describe the behavior that you want from OpenConveyor. -->
 
 ## Alternatives considered
 
-<!-- Other ways to solve this, and why they're worse. -->
+<!-- List the other ways to solve this, and explain why they are worse. -->
 
 ## Impact
 
 <!--
 - Does this change the Task CRD schema? (breaking, non-breaking?)
-- Does it relax any security default? (needs an ADR if yes.)
+- Does it relax any security default? (If yes, it needs an ADR.)
 - Does it require a new AgentClass or TriggerClass vocabulary?
 -->
 

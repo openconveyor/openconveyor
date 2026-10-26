@@ -2,8 +2,8 @@
 description: Dispatch a task to OpenConveyor for autonomous execution
 ---
 
-Dispatch the following prompt to OpenConveyor — it will run on the cluster as
-an autonomous agent Job and open a PR when done.
+Dispatch the prompt below to OpenConveyor. The prompt runs on the cluster as
+an autonomous agent Job and opens a PR when it completes.
 
 !kubectl apply -f - <<EOF
 apiVersion: openconveyor.ai/v1alpha1
@@ -31,9 +31,9 @@ EOF
 
 After the apply succeeds, print:
 
-1. The created Task's name (pulled from `kubectl get tasks -n conveyor-tasks --sort-by=.metadata.creationTimestamp -o name | tail -n 1`).
+1. The name of the created Task (read it from `kubectl get tasks -n conveyor-tasks --sort-by=.metadata.creationTimestamp -o name | tail -n 1`).
 2. The exact follow-along command:
    `kubectl -n conveyor-tasks logs -f job/<task-name>`.
 
-Do not run the follow-along command yourself — the user decides whether
+Do not run the follow-along command yourself. The user decides whether
 to tail the Job locally.

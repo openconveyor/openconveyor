@@ -1,8 +1,8 @@
 # Examples
 
-Five ways to fire agents, proving OpenConveyor's trigger-pluggability
-thesis. The reconciler, the AgentClass, and the Task shape are
-identical across examples — only the trigger differs.
+Five ways to start agents. They prove the trigger-pluggability thesis
+of OpenConveyor. The reconciler, the AgentClass, and the Task shape are
+identical across the examples. Only the trigger differs.
 
 | Example | Trigger | What it shows |
 |---|---|---|
@@ -16,18 +16,18 @@ identical across examples — only the trigger differs.
 
 Every example assumes:
 
-1. **OpenConveyor is installed.** See the top-level [`README.md`](../README.md);
-   this directory assumes CRDs and the controller manager are running.
+1. **You installed OpenConveyor.** See the top-level [`README.md`](../README.md).
+   This directory assumes that the CRDs and the controller manager are running.
 2. **A Task namespace exists.** The samples target `conveyor-tasks`:
 
    ```bash
    kubectl create namespace conveyor-tasks
    ```
 
-3. **The AgentClass for the example is applied.** Cluster-scoped, one
-   per archetype: the Linear, GitHub Issues and slash-command examples
-   use the implementer, the PR example the reviewer, the CronJob example
-   the reporter.
+3. **You applied the AgentClass for the example.** The AgentClass is
+   cluster-scoped, one per archetype. The Linear, GitHub Issues and
+   slash-command examples use the implementer. The PR example uses the
+   reviewer. The CronJob example uses the reporter.
 
    ```bash
    kubectl apply -f ../../config/samples/conveyor_v1alpha1_clusteragentclass.yaml           # implementer
@@ -35,10 +35,10 @@ Every example assumes:
    kubectl apply -f ../../config/samples/conveyor_v1alpha1_clusteragentclass_reporter.yaml  # reporter
    ```
 
-4. **Runtime secrets exist in `conveyor-tasks`.** Adjust per example.
+4. **Runtime secrets exist in `conveyor-tasks`.** Adjust them per example.
    The key name inside each Secret does not matter to the reference
-   agents (they export the file under the Secret's name, e.g.
-   `ANTHROPIC_API_KEY`), but the examples all use these:
+   agents. The agents export the file under the name of the Secret, for
+   example `ANTHROPIC_API_KEY`. All examples use these Secrets:
 
    ```bash
    kubectl -n conveyor-tasks create secret generic anthropic-api-key \
@@ -47,7 +47,6 @@ Every example assumes:
      --from-literal=token="$GITHUB_TOKEN"
    ```
 
-5. **Webhook examples only:** the trigger adapter is running (start
-   `conveyor` with `--trigger-bind-address=:9090`) and the webhook
-   signing Secret lives in the adapter's namespace (default
-   `conveyor-system`).
+5. **Webhook examples only:** the trigger adapter is running. Start
+   `conveyor` with `--trigger-bind-address=:9090`. The webhook signing
+   Secret is in the namespace of the adapter (default `conveyor-system`).

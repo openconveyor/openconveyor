@@ -1,6 +1,6 @@
 # Maintainers
 
-OpenConveyor is maintained by the people listed below. They have final
+The people in the table below maintain OpenConveyor. They have the final
 say on architecture, release cadence, and who else joins this list.
 
 | Name | GitHub | Email | Scope |
@@ -9,23 +9,23 @@ say on architecture, release cadence, and who else joins this list.
 
 ## Becoming a maintainer
 
-The project is in alpha and intentionally small. Additional
-maintainers will be proposed once there is a second sustained
-contributor and a clear area of ownership (e.g. a specific
-`AgentClass`, a specific trigger adapter, docs).
+The project is in alpha and intentionally small. The maintainers propose
+additional maintainers when there is a second sustained contributor and
+a clear area of ownership. Examples of an area are a specific
+`AgentClass`, a specific trigger adapter, or the docs.
 
-To propose a new maintainer, open a PR editing this file and include:
+To propose a new maintainer, open a PR that edits this file. Include:
 
-- What they've contributed (link to merged PRs and issues triaged).
-- The area they will own.
-- A statement from the proposed maintainer that they agree to
-  follow the [Code of Conduct](CODE_OF_CONDUCT.md) and the release
-  conventions in [CONTRIBUTING.md](CONTRIBUTING.md).
+- The contributions of the candidate: links to merged PRs and triaged issues.
+- The area of ownership for the candidate.
+- A statement from the candidate that they agree to follow the
+  [Code of Conduct](CODE_OF_CONDUCT.md) and the release conventions in
+  [CONTRIBUTING.md](CONTRIBUTING.md).
 
-A PR adding a maintainer requires a simple majority of current
-maintainers to approve. While there is only one maintainer, that
-means the current maintainer decides.
+A PR that adds a maintainer requires the approval of a simple majority
+of the current maintainers. While there is only one maintainer, the
+current maintainer decides.
 
 ## Emeritus
 
-No emeritus maintainers yet.
+There are no emeritus maintainers yet.
