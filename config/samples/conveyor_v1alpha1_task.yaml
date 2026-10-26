@@ -1,6 +1,11 @@
 # Minimal Task hitting the implementer agent. Permissions here union with
 # ClusterAgentClass.spec.requires — no need to repeat api.anthropic.com
 # or anthropic-api-key; they come from the AgentClass.
+#
+# No repository is configured (no TARGET_REPO in spec.agent.config), so
+# the implementer answers the prompt and exits without cloning, committing
+# or opening a PR: the quick start completes with only the two Secrets in
+# place. examples/ shows the repo-driven flows.
 apiVersion: openconveyor.ai/v1alpha1
 kind: Task
 metadata:
@@ -8,13 +13,15 @@ metadata:
     app.kubernetes.io/name: conveyor
     app.kubernetes.io/managed-by: kustomize
   name: task-sample
+  namespace: conveyor-tasks
 spec:
   agent:
     ref: claude-code-implementer
   prompt:
     inline: |
-      Fix the nil-pointer dereference on line 42 of foo.go and open a PR
-      against the `main` branch.
+      You are running inside an OpenConveyor Task as a smoke test. In two
+      sentences, say which tools you have available and confirm that no
+      repository is checked out. Do not create or modify any files.
   permissions:
     secrets:
       - github-token
