@@ -56,6 +56,11 @@ type TaskReconciler struct {
 	// IPs in its NetworkPolicy follow DNS changes. Zero disables the
 	// periodic re-resolution (the snapshot taken at creation stands).
 	EgressRefreshInterval time.Duration
+	// JobTTLSeconds is stamped on every Job as ttlSecondsAfterFinished:
+	// how long a finished Job (and its logs) stays before Kubernetes
+	// deletes it. Set from --job-ttl-seconds; DefaultJobTTLSeconds when
+	// the operator does not care.
+	JobTTLSeconds int32
 }
 
 var _ reconcile.Reconciler = (*TaskReconciler)(nil)
@@ -273,7 +278,7 @@ func (r *TaskReconciler) ensureJob(
 	agent *conveyorv1alpha1.ClusterAgentClass,
 	effectiveSecrets []string,
 ) (*batchv1.Job, error) {
-	desired, err := buildJob(task, agent, effectiveSecrets)
+	desired, err := buildJob(task, agent, effectiveSecrets, r.JobTTLSeconds)
 	if err != nil {
 		return nil, err
 	}

@@ -17,7 +17,12 @@ manager:
     tag: ""
     pullPolicy: IfNotPresent
 
-  ## Arguments
+  ## Seconds a finished Task Job (and its logs) is kept before Kubernetes
+  ## deletes it (--job-ttl-seconds). 0 deletes immediately.
+  ##
+  jobTTLSeconds: 3600
+
+  ## Extra arguments
   ##
   args:
     - --leader-elect

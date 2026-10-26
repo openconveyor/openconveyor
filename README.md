@@ -147,7 +147,8 @@ conveyor --trigger-bind-address=:9090 --trigger-namespace=conveyor-system
 
 Egress hostnames are re-resolved while a Task runs so NetworkPolicies
 follow DNS changes; tune or disable with `--egress-refresh-interval`
-(default `5m`, `0` disables).
+(default `5m`, `0` disables). Finished Jobs (and their logs) are kept
+for `--job-ttl-seconds` (default `3600`; Helm: `manager.jobTTLSeconds`).
 
 ## Examples
 

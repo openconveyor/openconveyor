@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"time"
 
@@ -78,6 +79,7 @@ type flags struct {
 	triggerAddr          string
 	triggerNamespace     string
 	egressRefresh        time.Duration
+	jobTTLSeconds        int
 }
 
 // defaultEgressRefresh bounds how long a Task's NetworkPolicy can lag a
@@ -109,6 +111,9 @@ func parseFlags() (flags, zap.Options) {
 	flag.StringVar(&fl.triggerNamespace, "trigger-namespace", "",
 		"Namespace where HMAC Secrets referenced by ClusterTriggerClass live. "+
 			"Defaults to POD_NAMESPACE or \""+defaultTriggerNamespace+"\".")
+	flag.IntVar(&fl.jobTTLSeconds, "job-ttl-seconds", int(controller.DefaultJobTTLSeconds),
+		"Seconds a finished Task Job (and its logs) is kept before Kubernetes deletes it "+
+			"(Job.spec.ttlSecondsAfterFinished). 0 deletes immediately.")
 	flag.DurationVar(&fl.egressRefresh, "egress-refresh-interval", defaultEgressRefresh,
 		"How often a running Task whose egress allowlist contains hostnames is re-resolved "+
 			"and its NetworkPolicy updated. 0 disables re-resolution.")
@@ -226,6 +231,9 @@ func main() {
 func run() error {
 	fl, zapOpts := parseFlags()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
+	if fl.jobTTLSeconds < 0 || fl.jobTTLSeconds > math.MaxInt32 {
+		return fmt.Errorf("--job-ttl-seconds must be between 0 and %d, got %d", math.MaxInt32, fl.jobTTLSeconds)
+	}
 
 	tlsOpts := buildTLSOpts(fl)
 
@@ -266,6 +274,7 @@ func run() error {
 		Client:                mgr.GetClient(),
 		Scheme:                mgr.GetScheme(),
 		EgressRefreshInterval: fl.egressRefresh,
+		JobTTLSeconds:         int32(fl.jobTTLSeconds), //nolint:gosec // range-checked above
 	}).SetupWithManager(ctx, mgr); err != nil {
 		return fmt.Errorf("create Task controller: %w", err)
 	}
