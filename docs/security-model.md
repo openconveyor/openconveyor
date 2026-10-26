@@ -146,6 +146,36 @@ We also do not defend against a malicious user with `create tasks`
 RBAC. Task authors are trusted to ask only for what they need;
 auditing declared permissions is the cluster operator's job.
 
+## Supply chain
+
+Every release (`release.yml`, on a `v*` tag) runs the same lint, unit,
+e2e, chart and agent-image workflows a PR gets before anything is
+pushed, and every `uses:` in `.github/workflows/` is pinned to a commit
+SHA with the version as a trailing comment (dependabot keeps them
+current). The four images (`conveyor` and the three reference agents)
+are pushed with a BuildKit provenance attestation and SBOM and signed
+keyless with cosign against the workflow's OIDC identity. `govulncheck`
+runs on every PR.
+
+Verify an image before deploying it:
+
+```sh
+IMAGE=ghcr.io/openconveyor/conveyor:v0.3.0
+
+# Signature: issued to this repo's release workflow for a v* tag.
+cosign verify "$IMAGE" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/openconveyor/openconveyor/\.github/workflows/release\.yml@refs/tags/v'
+
+# SBOM and provenance attached to the multi-arch manifest.
+docker buildx imagetools inspect "$IMAGE" --format '{{ json .SBOM }}'
+docker buildx imagetools inspect "$IMAGE" --format '{{ json .Provenance }}'
+```
+
+A tag that fails `cosign verify` was not produced by this repository's
+release workflow. The same commands work for
+`ghcr.io/openconveyor/agent-claude-{implementer,reviewer,reporter}`.
+
 ## Verification
 
 From a Task pod (run `kubectl debug` or edit the image to include
