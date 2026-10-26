@@ -78,7 +78,8 @@ openconveyor.ai/task=<name>` to see everything for a Task at once.
 The richer signal is `status.conditions[type=Ready]` with a reason
 from a small closed enum (`AgentClassMissing`, `InvalidSpec`,
 `EgressResolveFailed`, …). Triggers should watch conditions, not
-scrape phase strings.
+scrape phase strings. Every phase, reason, message and Event is listed
+in [`status-reference.md`](status-reference.md).
 
 A terminal Task is never reconciled into a Job again. If it carries
 `spec.ttlSecondsAfterFinished`, or the controller runs with

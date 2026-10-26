@@ -4,7 +4,7 @@
 > Least-privilege by default. Trigger-agnostic. Agent-agnostic.
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Go Report](https://img.shields.io/badge/go%20report-pending-lightgrey.svg)](#)
+[![Go Report Card](https://goreportcard.com/badge/github.com/openconveyor/openconveyor)](https://goreportcard.com/report/github.com/openconveyor/openconveyor)
 [![Status](https://img.shields.io/badge/status-alpha-orange.svg)](#status)
 [![Website](https://img.shields.io/badge/website-openconveyor.ai-0A66C2.svg)](https://openconveyor.ai)
 
@@ -118,8 +118,9 @@ kubectl -n conveyor-tasks get tasks -w
 The Task goes `Pending` → `Running` → `Completed` in about a minute
 (the first run pulls the agent image). Read what the agent said with
 `kubectl -n conveyor-tasks logs job/task-sample`, and `kubectl -n
-conveyor-tasks describe task task-sample` for the Events. The
-controller lives in the `conveyor-system` namespace; the sample
+conveyor-tasks describe task task-sample` for the Events (every
+phase and reason is in [`docs/status-reference.md`](docs/status-reference.md)).
+The controller lives in the `conveyor-system` namespace; the sample
 kustomization puts the Task in `conveyor-tasks`. See
 [`docs/security-model.md`](docs/security-model.md) for the four
 guarantees the controller enforces on every Task it spawns.
@@ -181,10 +182,13 @@ the cluster-wide `--task-ttl-seconds` when the Task sets none (Helm:
 | [`examples/linear-claude-code/`](examples/linear-claude-code/) | Linear workflow-state webhook | SaaS tracker → Task → PR |
 | [`examples/github-pr-claude-code/`](examples/github-pr-claude-code/) | GitHub Pull Requests webhook | Label → Task → PR review comment (reviewer archetype) |
 | [`examples/claude-code-slash-dispatch/`](examples/claude-code-slash-dispatch/) | Claude Code `/conveyor` slash command | Laptop is a trigger — no webhook, no server |
+| [`examples/cronjob-reporter/`](examples/cronjob-reporter/) | Kubernetes CronJob | Scheduled Task → GitHub issue comment (reporter archetype) |
 
-The first three examples drive the `claude-code-implementer` agent;
-the PR example drives `claude-code-reviewer`. The trigger is the only
-moving piece — the Task shape and the reconciler are identical.
+The Issues, Linear and slash-command examples drive the
+`claude-code-implementer` agent; the PR example drives
+`claude-code-reviewer` and the CronJob example `claude-code-reporter`.
+The trigger is the only moving piece — the Task shape and the
+reconciler are identical.
 
 ## Architecture
 
@@ -282,6 +286,9 @@ We welcome issues, design critique, and PRs. Start by reading:
 
 - [`docs/architecture.md`](docs/architecture.md) — how the operator
   is wired.
+- [`docs/status-reference.md`](docs/status-reference.md) — every
+  phase, `Ready` reason and Event a Task can report, for triggers and
+  dashboards.
 - [`docs/plugin-authoring.md`](docs/plugin-authoring.md) — how to add
   a new AgentClass or ClusterTriggerClass config.
 - [`docs/enterprise-auth.md`](docs/enterprise-auth.md) — short-lived
