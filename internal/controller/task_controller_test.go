@@ -378,6 +378,12 @@ var _ = Describe("Task Controller", func() {
 			Expect(cidrs).To(HaveKey("203.0.113.10/32"), "hostname resolved via fakeResolver")
 		})
 
+		It("restricts the allowlist rule to port 443 when egressPorts is unset", func() {
+			var np networkingv1.NetworkPolicy
+			Expect(k8sClient.Get(ctx, taskKey, &np)).To(Succeed())
+			Expect(allowlistPorts(&np)).To(ConsistOf("TCP/443", "UDP/443"))
+		})
+
 		It("creates a Role + RoleBinding from the declared verbs", func() {
 			var role rbacv1.Role
 			Expect(k8sClient.Get(ctx, taskKey, &role)).To(Succeed())
@@ -448,6 +454,21 @@ var _ = Describe("Task Controller", func() {
 			Expect(k8sClient.Get(ctx, taskKey, &rb)).To(Succeed())
 			Expect(rb.Subjects).To(HaveLen(1))
 			Expect(rb.Subjects[0].Name).To(Equal(taskName))
+		})
+	})
+
+	Context("egress ports — spec.permissions.egressPorts narrows the allowlist rule", func() {
+		It("opens exactly the declared ports on the resolved CIDRs", func() {
+			task := newTask(taskName, taskNamespace, withEgress("10.0.0.0/8"), func(t *conveyorv1alpha1.Task) {
+				t.Spec.Permissions.EgressPorts = []int32{22, 8443}
+			})
+			Expect(k8sClient.Create(ctx, task)).To(Succeed())
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			var np networkingv1.NetworkPolicy
+			Expect(k8sClient.Get(ctx, taskKey, &np)).To(Succeed())
+			Expect(allowlistPorts(&np)).To(ConsistOf("TCP/22", "UDP/22", "TCP/8443", "UDP/8443"))
 		})
 	})
 
@@ -808,6 +829,12 @@ var _ = Describe("Task Controller", func() {
 					}
 				},
 				"exactly one of inline, secretRef or configMapRef"),
+			Entry("egress port out of range",
+				func(t *conveyorv1alpha1.Task) { t.Spec.Permissions.EgressPorts = []int32{70000} },
+				"spec.permissions.egressPorts"),
+			Entry("egress port zero",
+				func(t *conveyorv1alpha1.Task) { t.Spec.Permissions.EgressPorts = []int32{0} },
+				"spec.permissions.egressPorts"),
 			Entry("malformed cpu quantity",
 				func(t *conveyorv1alpha1.Task) { t.Spec.Resources.CPU = "not-a-cpu" },
 				"spec.resources.cpu"),
@@ -1032,3 +1059,25 @@ var _ = Describe("Task Controller", func() {
 		})
 	})
 })
+
+// allowlistPorts returns "PROTO/port" for every port on the NetworkPolicy
+// egress rules that target IPBlocks, i.e. the allowlist rule (the DNS rule
+// targets a pod selector and is skipped).
+func allowlistPorts(np *networkingv1.NetworkPolicy) []string {
+	var out []string
+	for _, rule := range np.Spec.Egress {
+		targetsIPBlock := false
+		for _, peer := range rule.To {
+			if peer.IPBlock != nil {
+				targetsIPBlock = true
+			}
+		}
+		if !targetsIPBlock {
+			continue
+		}
+		for _, p := range rule.Ports {
+			out = append(out, string(*p.Protocol)+"/"+p.Port.String())
+		}
+	}
+	return out
+}

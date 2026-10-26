@@ -96,6 +96,21 @@ spec:
                         rule: isCIDR(self) || isIP(self) || self.matches('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*[.]?$')
                     maxItems: 256
                     type: array
+                  egressPorts:
+                    description: |-
+                      egressPorts restricts every egress allowlist entry to these
+                      destination ports (TCP and UDP). Unset means [443]. It does not
+                      apply to the DNS rule, which always uses port 53. Ports are a
+                      separate field rather than a ":port" suffix on egress entries
+                      because IPv6 CIDRs contain colons.
+                    items:
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: set
                   rbac:
                     description: |-
                       rbac is the list of Kubernetes RBAC rules the Task needs. Empty means

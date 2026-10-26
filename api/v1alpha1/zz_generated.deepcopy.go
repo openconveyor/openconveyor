@@ -350,6 +350,11 @@ func (in *Permissions) DeepCopyInto(out *Permissions) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.EgressPorts != nil {
+		in, out := &in.EgressPorts, &out.EgressPorts
+		*out = make([]int32, len(*in))
+		copy(*out, *in)
+	}
 	if in.RBAC != nil {
 		in, out := &in.RBAC, &out.RBAC
 		*out = make([]RBACRule, len(*in))

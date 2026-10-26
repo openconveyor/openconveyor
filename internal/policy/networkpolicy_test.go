@@ -77,7 +77,7 @@ func TestBuildNetworkPolicy(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			np, err := BuildNetworkPolicy(context.Background(), resolver, "demo", "ns", tc.egress)
+			np, err := BuildNetworkPolicy(context.Background(), resolver, "demo", "ns", tc.egress, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -106,7 +106,7 @@ func TestBuildNetworkPolicy(t *testing.T) {
 }
 
 func TestBuildNetworkPolicy_InvalidCIDR(t *testing.T) {
-	_, err := BuildNetworkPolicy(context.Background(), StaticResolver{}, "demo", "ns", []string{"not-a-cidr/99"})
+	_, err := BuildNetworkPolicy(context.Background(), StaticResolver{}, "demo", "ns", []string{"not-a-cidr/99"}, nil)
 	if err == nil {
 		t.Fatal("expected error on invalid CIDR")
 	}
@@ -146,7 +146,7 @@ func TestBuildNetworkPolicy_ResolverError(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			resolver := StaticResolver{Err: tc.err}
-			_, err := BuildNetworkPolicy(context.Background(), resolver, "demo", "ns", []string{"api.example.com"})
+			_, err := BuildNetworkPolicy(context.Background(), resolver, "demo", "ns", []string{"api.example.com"}, nil)
 			if err == nil {
 				t.Fatal("expected error when resolver fails")
 			}
@@ -181,7 +181,7 @@ func TestBuildNetworkPolicy_LookupIsBounded(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := BuildNetworkPolicy(ctx, deadlineCheckingResolver{sawDeadline: &sawDeadline}, "demo", "ns", []string{"api.example.com"})
+	_, err := BuildNetworkPolicy(ctx, deadlineCheckingResolver{sawDeadline: &sawDeadline}, "demo", "ns", []string{"api.example.com"}, nil)
 	if err == nil {
 		t.Fatal("expected error from cancelled lookup")
 	}
@@ -193,8 +193,68 @@ func TestBuildNetworkPolicy_LookupIsBounded(t *testing.T) {
 	}
 }
 
+// TestBuildNetworkPolicy_EgressPorts pins #24: the allowlist rule is
+// restricted to spec.permissions.egressPorts, 443 when unset, on both
+// TCP and UDP (HTTP/3 is UDP 443). The DNS rule keeps its own port 53.
+func TestBuildNetworkPolicy_EgressPorts(t *testing.T) {
+	tests := []struct {
+		name      string
+		ports     []int32
+		wantPorts []string
+	}{
+		{"unset → 443 only", nil, []string{"TCP/443", "UDP/443"}},
+		{"empty → 443 only", []int32{}, []string{"TCP/443", "UDP/443"}},
+		{"explicit list replaces the default", []int32{22, 8443}, []string{"TCP/22", "UDP/22", "TCP/8443", "UDP/8443"}},
+		{"duplicates collapse", []int32{443, 443}, []string{"TCP/443", "UDP/443"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			np, err := BuildNetworkPolicy(context.Background(), StaticResolver{}, "demo", "ns", []string{"10.0.0.0/8"}, tc.ports)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := collectAllowlistPorts(np)
+			if !equalUnordered(got, tc.wantPorts) {
+				t.Errorf("allowlist ports: got %v want %v", got, tc.wantPorts)
+			}
+			if !hasDNSRule(np) {
+				t.Error("DNS rule must keep port 53 regardless of egressPorts")
+			}
+		})
+	}
+}
+
+// collectAllowlistPorts returns "PROTO/port" for every port on the
+// IPBlock (allowlist) rules, skipping the DNS rule.
+func collectAllowlistPorts(np *networkingv1.NetworkPolicy) []string {
+	var out []string
+	for _, rule := range np.Spec.Egress {
+		hasIPBlock := false
+		for _, peer := range rule.To {
+			if peer.IPBlock != nil {
+				hasIPBlock = true
+			}
+		}
+		if !hasIPBlock {
+			continue
+		}
+		for _, p := range rule.Ports {
+			proto := "TCP"
+			if p.Protocol != nil {
+				proto = string(*p.Protocol)
+			}
+			port := "any"
+			if p.Port != nil {
+				port = p.Port.String()
+			}
+			out = append(out, proto+"/"+port)
+		}
+	}
+	return out
+}
+
 func TestBuildNetworkPolicy_PodSelectorBindsToTask(t *testing.T) {
-	np, err := BuildNetworkPolicy(context.Background(), StaticResolver{}, "demo-task", "ns", nil)
+	np, err := BuildNetworkPolicy(context.Background(), StaticResolver{}, "demo-task", "ns", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

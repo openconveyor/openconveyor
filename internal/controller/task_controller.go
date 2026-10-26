@@ -235,7 +235,8 @@ func (r *TaskReconciler) ensureRoleBinding(ctx context.Context, task *conveyorv1
 
 // ensureNetworkPolicy resolves the Task's egress allowlist to CIDRs and
 // upserts a NetworkPolicy that pairs a default-deny baseline with DNS +
-// allowlist exceptions. When egress is empty the policy has zero egress
+// allowlist exceptions, the latter restricted to spec.permissions.egressPorts
+// (443 when unset). When egress is empty the policy has zero egress
 // rules — the pod cannot reach anything, not even DNS.
 func (r *TaskReconciler) ensureNetworkPolicy(ctx context.Context, task *conveyorv1alpha1.Task, egress []string) error {
 	resolver := r.Resolver
@@ -245,7 +246,7 @@ func (r *TaskReconciler) ensureNetworkPolicy(ctx context.Context, task *conveyor
 		resolver = policy.DefaultResolver{}
 	}
 
-	desired, err := policy.BuildNetworkPolicy(ctx, resolver, task.Name, task.Namespace, egress)
+	desired, err := policy.BuildNetworkPolicy(ctx, resolver, task.Name, task.Namespace, egress, task.Spec.Permissions.EgressPorts)
 	if err != nil {
 		return err
 	}
