@@ -1,0 +1,9 @@
+extends: existence
+message: "'%s' is future tense. Use the present tense unless the event is in the future."
+link: https://github.com/openconveyor/openconveyor/blob/main/docs/writing-style.md#sentence-rules
+level: suggestion
+ignorecase: true
+nonword: true
+tokens:
+  - '\bwill\b'
+  - "\\bwon't\\b"

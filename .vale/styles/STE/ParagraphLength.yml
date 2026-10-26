@@ -1,0 +1,7 @@
+extends: occurrence
+message: "Paragraph has more than 6 sentences. Split it by topic."
+link: https://github.com/openconveyor/openconveyor/blob/main/docs/writing-style.md#sentence-rules
+level: suggestion
+scope: paragraph
+max: 6
+token: '[.!?](\s|$)'
