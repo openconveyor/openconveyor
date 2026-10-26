@@ -37,8 +37,8 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
-// These tests use Ginkgo (BDD-style Go testing framework). Refer to
-// http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
+// These tests use Ginkgo, a BDD-style Go testing framework. See
+// http://onsi.github.io/ginkgo/ for more about Ginkgo.
 
 var (
 	ctx       context.Context
@@ -71,12 +71,12 @@ var _ = BeforeSuite(func() {
 		ErrorIfCRDPathMissing: true,
 	}
 
-	// Retrieve the first found binary directory to allow running tests from IDEs
+	// Find the first binary directory, so that an IDE can also run the tests.
 	if getFirstFoundEnvTestBinaryDir() != "" {
 		testEnv.BinaryAssetsDirectory = getFirstFoundEnvTestBinaryDir()
 	}
 
-	// cfg is defined in this file globally.
+	// This file declares cfg at the package level.
 	cfg, err = testEnv.Start()
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
@@ -95,13 +95,14 @@ var _ = AfterSuite(func() {
 })
 
 // getFirstFoundEnvTestBinaryDir locates the first binary in the specified path.
-// ENVTEST-based tests depend on specific binaries, usually located in paths set by
-// controller-runtime. When running tests directly (e.g., via an IDE) without using
-// Makefile targets, the 'BinaryAssetsDirectory' must be explicitly configured.
+// ENVTEST-based tests depend on specific binaries, usually in paths that
+// controller-runtime sets. When you run the tests directly, for example from an
+// IDE, without the Makefile targets, you must configure 'BinaryAssetsDirectory'
+// explicitly.
 //
-// This function streamlines the process by finding the required binaries, similar to
-// setting the 'KUBEBUILDER_ASSETS' environment variable. To ensure the binaries are
-// properly set up, run 'make setup-envtest' beforehand.
+// This function finds the required binaries for you, similar to setting the
+// 'KUBEBUILDER_ASSETS' environment variable. Run 'make setup-envtest' first to
+// make sure that the binaries are in place.
 func getFirstFoundEnvTestBinaryDir() string {
 	basePath := filepath.Join("..", "..", "bin", "k8s")
 	entries, err := os.ReadDir(basePath)

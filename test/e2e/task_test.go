@@ -36,15 +36,15 @@ import (
 	"github.com/openconveyor/openconveyor/test/utils"
 )
 
-// taskNamespace is where the e2e Tasks run. It is separate from the
-// controller's namespace so the owned resources can be listed and
-// deleted without touching the manager.
+// taskNamespace is the namespace where the e2e Tasks run. It is separate
+// from the controller's namespace, so the suite can list and delete the
+// owned resources without touching the manager.
 const taskNamespace = "e2e-tasks"
 
 // taskSpecs holds the real Task scenarios from #39. It runs inside the
-// Ordered "Manager" container so the controller deployed in its
-// BeforeAll is available; the manifests under testdata/ are the ones
-// from the manual kind smoke (#57).
+// Ordered "Manager" container, so the controller from its BeforeAll is
+// available. The manifests under testdata/ are the ones from the manual
+// kind smoke test (#57).
 func taskSpecs() {
 	BeforeAll(func() {
 		By("creating the Task namespace")
@@ -171,8 +171,8 @@ func taskSpecs() {
 		_, err := utils.Run(exec.Command("kubectl", "apply", "-f", manifest))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply Task manifests")
 
-		// The Task timeout is 2m, so even if the connection attempt hangs
-		// the Job deadline turns it into TimedOut inside this window.
+		// The Task timeout is 2m. If the connection attempt hangs, the Job
+		// deadline turns the Task into TimedOut inside this window.
 		By("waiting for the Task to reach a terminal phase")
 		var task conveyorv1alpha1.Task
 		Eventually(func(g Gomega) {

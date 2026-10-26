@@ -33,7 +33,7 @@ import (
 	"github.com/openconveyor/openconveyor/internal/policy"
 )
 
-// Shared cadence for the Eventually polls sprinkled through the suite.
+// The shared cadence for the Eventually polls throughout the suite.
 const (
 	eventuallyTimeout = 5 * time.Second
 	eventuallyPoll    = 100 * time.Millisecond
@@ -84,8 +84,8 @@ var _ = Describe("Task Controller", func() {
 	ctx := context.Background()
 	taskKey := types.NamespacedName{Name: taskName, Namespace: taskNamespace}
 
-	// recorder captures the Events a reconcile emits; drained by
-	// recordedEvents. Replaced per spec so Events never leak across.
+	// recorder captures the Events that a reconcile emits; recordedEvents
+	// drains it. Each spec replaces it, so Events never leak across specs.
 	var recorder *events.FakeRecorder
 
 	reconciler := func() *TaskReconciler {
@@ -116,7 +116,7 @@ var _ = Describe("Task Controller", func() {
 		}
 	}
 
-	// ensureAgentClass gets-or-creates a ClusterAgentClass and registers
+	// ensureAgentClass gets or creates a ClusterAgentClass and registers
 	// its deletion for cleanup after the spec.
 	ensureAgentClass := func(spec conveyorv1alpha1.ClusterAgentClassSpec, name string) {
 		agent := &conveyorv1alpha1.ClusterAgentClass{
@@ -134,7 +134,7 @@ var _ = Describe("Task Controller", func() {
 		})
 	}
 
-	// readyCondition fetches the "Ready" condition off a Task's status.
+	// readyConditionOf fetches the "Ready" condition from a Task's status.
 	readyConditionOf := func(task *conveyorv1alpha1.Task) *metav1.Condition {
 		cond := meta.FindStatusCondition(task.Status.Conditions, conditionReady)
 		ExpectWithOffset(1, cond).NotTo(BeNil(), "expected a Ready condition")
@@ -158,9 +158,10 @@ var _ = Describe("Task Controller", func() {
 		if err := k8sClient.Get(ctx, taskKey, task); err == nil {
 			Expect(k8sClient.Delete(ctx, task)).To(Succeed())
 		}
-		// Manually delete owned resources — envtest does not run the GC controller
-		// that would cascade from ownerReferences. Also poll until the Job is gone
-		// so the next spec doesn't hit a stale immutable Job from this one.
+		// Delete the owned resources by hand: envtest does not run the GC
+		// controller that cascades from ownerReferences. Also poll until the Job
+		// no longer exists, so the next spec does not find a stale immutable Job
+		// from this one.
 		propagation := metav1.DeletePropagationBackground
 		deleteOpts := &client.DeleteOptions{PropagationPolicy: &propagation}
 		owned := []client.Object{
@@ -175,7 +176,7 @@ var _ = Describe("Task Controller", func() {
 			obj.SetNamespace(taskNamespace)
 			_ = k8sClient.Delete(ctx, obj, deleteOpts)
 		}
-		// The prompt and config ConfigMaps have different names — handle separately.
+		// The prompt and config ConfigMaps have different names, so delete them separately.
 		for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.AgentConfigMapName(taskName)} {
 			cm := &corev1.ConfigMap{}
 			cm.SetName(name)
@@ -831,8 +832,8 @@ var _ = Describe("Task Controller", func() {
 	})
 
 	Context("Job outcome — failure conditions drive the terminal phase", func() {
-		// failJob marks the live Job failed with the given condition reason,
-		// mirroring how the job controller reports it.
+		// failJob marks the live Job failed with the given condition reason.
+		// It mirrors how the Job controller reports it.
 		failJob := func(reason string) {
 			var job batchv1.Job
 			ExpectWithOffset(1, k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
@@ -1212,9 +1213,10 @@ var _ = Describe("Task Controller", func() {
 
 	Context("ClusterAgentClass events — mapping back to waiting Tasks", func() {
 		// The suite's direct envtest client cannot serve the custom
-		// .spec.agent.ref field selector — that index lives in the manager's
-		// cache and the suite never runs SetupWithManager. A fake client
-		// carrying the same index exercises tasksForAgentClass's filtering.
+		// .spec.agent.ref field selector. That index is in the manager's
+		// cache, and the suite never runs SetupWithManager. A fake client
+		// that carries the same index exercises the filtering in
+		// tasksForAgentClass.
 		It("enqueues only non-terminal Tasks that reference the class", func() {
 			completed := newTask("map-done", taskNamespace, withAgentRef("map-agent"))
 			completed.Status.Phase = conveyorv1alpha1.TaskPhaseCompleted
@@ -1224,7 +1226,7 @@ var _ = Describe("Task Controller", func() {
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(k8sClient.Scheme()).
 				WithIndex(&conveyorv1alpha1.Task{}, taskAgentRefIndex, func(obj client.Object) []string {
-					// Mirrors the index function registered in SetupWithManager.
+					// This mirrors the index function that SetupWithManager registers.
 					task := obj.(*conveyorv1alpha1.Task)
 					if task.Spec.Agent.Ref == "" {
 						return nil
@@ -1246,8 +1248,8 @@ var _ = Describe("Task Controller", func() {
 })
 
 // allowlistPorts returns "PROTO/port" for every port on the NetworkPolicy
-// egress rules that target IPBlocks, i.e. the allowlist rule (the DNS rule
-// targets a pod selector and is skipped).
+// egress rules that target IPBlocks, that is, the allowlist rule. It skips
+// the DNS rule, which targets a pod selector.
 func allowlistPorts(np *networkingv1.NetworkPolicy) []string {
 	var out []string
 	for _, rule := range np.Spec.Egress {

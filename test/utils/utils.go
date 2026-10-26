@@ -32,7 +32,7 @@ const (
 	defaultKindCluster = "kind"
 )
 
-// Run executes the provided command within this context
+// Run executes the provided command in this context.
 func Run(cmd *exec.Cmd) (string, error) {
 	dir, _ := GetProjectDir()
 	cmd.Dir = dir
@@ -52,7 +52,7 @@ func Run(cmd *exec.Cmd) (string, error) {
 	return string(output), nil
 }
 
-// LoadImageToKindClusterWithName loads a local docker image to the kind cluster
+// LoadImageToKindClusterWithName loads a local Docker image into the kind cluster.
 func LoadImageToKindClusterWithName(name string) error {
 	cluster := defaultKindCluster
 	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
@@ -68,8 +68,8 @@ func LoadImageToKindClusterWithName(name string) error {
 	return err
 }
 
-// GetNonEmptyLines converts given command output string into individual objects
-// according to line breakers, and ignores the empty elements in it.
+// GetNonEmptyLines splits the given command output into lines at the line
+// breaks and ignores the empty lines.
 func GetNonEmptyLines(output string) []string {
 	var res []string
 	elements := strings.SplitSeq(output, "\n")
@@ -82,7 +82,7 @@ func GetNonEmptyLines(output string) []string {
 	return res
 }
 
-// GetProjectDir will return the directory where the project is
+// GetProjectDir returns the directory of the project.
 func GetProjectDir() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -92,8 +92,8 @@ func GetProjectDir() (string, error) {
 	return wd, nil
 }
 
-// UncommentCode searches for target in the file and remove the comment prefix
-// of the target content. The target content may span multiple lines.
+// UncommentCode searches for target in the file and removes the comment prefix
+// from the target content. The target content can span multiple lines.
 func UncommentCode(filename, target, prefix string) error {
 	// false positive
 	// nolint:gosec
@@ -122,7 +122,7 @@ func UncommentCode(filename, target, prefix string) error {
 		if _, err = out.WriteString(strings.TrimPrefix(scanner.Text(), prefix)); err != nil {
 			return fmt.Errorf("failed to write to output: %w", err)
 		}
-		// Avoid writing a newline in case the previous line was the last in target.
+		// Do not write a newline when the previous line is the last line in target.
 		if !scanner.Scan() {
 			break
 		}

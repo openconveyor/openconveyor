@@ -22,11 +22,8 @@ import (
 	"github.com/openconveyor/openconveyor/internal/policy"
 )
 
-// TestBuildJob_SecurityDefaults locks every hardening flag the security
-// model calls a guarantee, not a knob (docs/security-model.md), against
-// regression — independent of envtest.
 // buildMinimalJob runs buildJob on a Task with no declared permissions
-// and a bare ClusterAgentClass: the security baseline every Task gets.
+// and a bare ClusterAgentClass: the security baseline that every Task gets.
 func buildMinimalJob(t *testing.T) *batchv1.Job {
 	t.Helper()
 	task := &conveyorv1alpha1.Task{
@@ -51,8 +48,9 @@ func buildMinimalJob(t *testing.T) *batchv1.Job {
 	return job
 }
 
-// TestBuildJob_TTLFromCaller pins #22: the finished-Job TTL is whatever
-// the controller was configured with, not a compile-time constant.
+// TestBuildJob_TTLFromCaller pins #22: the finished-Job TTL is the value
+// that the operator configures on the controller, not a compile-time
+// constant.
 func TestBuildJob_TTLFromCaller(t *testing.T) {
 	task := &conveyorv1alpha1.Task{
 		ObjectMeta: metav1.ObjectMeta{Name: "ttl-task", Namespace: "ns"},
@@ -79,9 +77,9 @@ func TestBuildJob_TTLFromCaller(t *testing.T) {
 	}
 }
 
-// TestBuildJob_PodSecurityContext pins identity and seccomp at pod level
-// (#26): pod-level values cover injected sidecars (service meshes) and
-// are where PSS "restricted" reads them.
+// TestBuildJob_PodSecurityContext pins identity and seccomp at the pod
+// level (#26). Pod-level values cover injected sidecars (service meshes),
+// and PSS "restricted" reads them there.
 func TestBuildJob_PodSecurityContext(t *testing.T) {
 	psc := buildMinimalJob(t).Spec.Template.Spec.SecurityContext
 	if psc == nil {
@@ -101,6 +99,9 @@ func TestBuildJob_PodSecurityContext(t *testing.T) {
 	}
 }
 
+// TestBuildJob_SecurityDefaults locks every hardening flag that the
+// security model calls a guarantee, not a setting (docs/security-model.md),
+// against regression. It does not need envtest.
 func TestBuildJob_SecurityDefaults(t *testing.T) {
 	job := buildMinimalJob(t)
 
@@ -167,11 +168,10 @@ func TestBuildJob_SecurityDefaults(t *testing.T) {
 	}
 }
 
-// TestBuildJob_RBACMountsToken pins the automount flip side: declaring
-// any RBAC rule mounts the ServiceAccount token.
 // TestBuildServiceAccount_Automount pins #68: the ServiceAccount
-// mirrors the pod's automount decision, so anything else that ever
-// runs as this SA gets no token either unless RBAC was declared.
+// mirrors the pod's automount decision. Any other pod that ever runs as
+// this ServiceAccount then also gets no token, unless the Task declares
+// RBAC.
 func TestBuildServiceAccount_Automount(t *testing.T) {
 	rule := conveyorv1alpha1.RBACRule{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get"}}
 	tests := []struct {
@@ -196,6 +196,8 @@ func TestBuildServiceAccount_Automount(t *testing.T) {
 	}
 }
 
+// TestBuildJob_RBACMountsToken pins the other side of automount: a Task
+// that declares any RBAC rule mounts the ServiceAccount token.
 func TestBuildJob_RBACMountsToken(t *testing.T) {
 	task := &conveyorv1alpha1.Task{
 		ObjectMeta: metav1.ObjectMeta{Name: "rbac-task", Namespace: "ns"},
