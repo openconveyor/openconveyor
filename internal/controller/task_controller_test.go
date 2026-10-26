@@ -90,9 +90,10 @@ var _ = Describe("Task Controller", func() {
 
 	reconciler := func() *TaskReconciler {
 		return &TaskReconciler{
-			Client:   k8sClient,
-			Scheme:   k8sClient.Scheme(),
-			Recorder: recorder,
+			Client:        k8sClient,
+			Scheme:        k8sClient.Scheme(),
+			Recorder:      recorder,
+			JobTTLSeconds: DefaultJobTTLSeconds,
 			Resolver: policy.StaticResolver{
 				Hosts: map[string][]string{
 					"api.example.com": {"203.0.113.10"},
@@ -552,6 +553,20 @@ var _ = Describe("Task Controller", func() {
 			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.RequeueAfter).To(BeZero(), "the reconcile that reaches a terminal phase must not schedule another")
+		})
+	})
+
+	Context("Job TTL — the controller flag decides how long finished Jobs linger", func() {
+		It("stamps the configured TTL on the Job", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace))).To(Succeed())
+			r := reconciler()
+			r.JobTTLSeconds = 600
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			Expect(job.Spec.TTLSecondsAfterFinished).To(HaveValue(BeEquivalentTo(600)))
 		})
 	})
 

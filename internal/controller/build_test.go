@@ -44,11 +44,39 @@ func buildMinimalJob(t *testing.T) *batchv1.Job {
 		Spec:       conveyorv1alpha1.ClusterAgentClassSpec{Image: "busybox:1.36"},
 	}
 
-	job, err := buildJob(task, agent, nil)
+	job, err := buildJob(task, agent, nil, DefaultJobTTLSeconds)
 	if err != nil {
 		t.Fatalf("buildJob() = %v, want nil", err)
 	}
 	return job
+}
+
+// TestBuildJob_TTLFromCaller pins #22: the finished-Job TTL is whatever
+// the controller was configured with, not a compile-time constant.
+func TestBuildJob_TTLFromCaller(t *testing.T) {
+	task := &conveyorv1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: "ttl-task", Namespace: "ns"},
+		Spec: conveyorv1alpha1.TaskSpec{
+			Agent:  conveyorv1alpha1.AgentRef{Ref: "hello"},
+			Prompt: conveyorv1alpha1.PromptSource{Inline: "go"},
+			Resources: conveyorv1alpha1.TaskResources{
+				Timeout: metav1.Duration{Duration: time.Minute},
+			},
+		},
+	}
+	agent := &conveyorv1alpha1.ClusterAgentClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "hello"},
+		Spec:       conveyorv1alpha1.ClusterAgentClassSpec{Image: "busybox:1.36"},
+	}
+	for _, ttl := range []int32{0, 600, 86400} {
+		job, err := buildJob(task, agent, nil, ttl)
+		if err != nil {
+			t.Fatalf("buildJob(ttl=%d) = %v, want nil", ttl, err)
+		}
+		if got := job.Spec.TTLSecondsAfterFinished; got == nil || *got != ttl {
+			t.Errorf("TTLSecondsAfterFinished = %v, want %d", got, ttl)
+		}
+	}
 }
 
 // TestBuildJob_PodSecurityContext pins identity and seccomp at pod level
@@ -82,8 +110,8 @@ func TestBuildJob_SecurityDefaults(t *testing.T) {
 	if got := *job.Spec.ActiveDeadlineSeconds; got != 300 {
 		t.Errorf("ActiveDeadlineSeconds = %d, want 300 (from spec.resources.timeout)", got)
 	}
-	if job.Spec.TTLSecondsAfterFinished == nil {
-		t.Error("TTLSecondsAfterFinished not set")
+	if got := job.Spec.TTLSecondsAfterFinished; got == nil || *got != DefaultJobTTLSeconds {
+		t.Errorf("TTLSecondsAfterFinished = %v, want the %d default", got, DefaultJobTTLSeconds)
 	}
 
 	pod := job.Spec.Template.Spec
@@ -189,7 +217,7 @@ func TestBuildJob_RBACMountsToken(t *testing.T) {
 		Spec:       conveyorv1alpha1.ClusterAgentClassSpec{Image: "busybox:1.36"},
 	}
 
-	job, err := buildJob(task, agent, nil)
+	job, err := buildJob(task, agent, nil, DefaultJobTTLSeconds)
 	if err != nil {
 		t.Fatalf("buildJob() = %v, want nil", err)
 	}

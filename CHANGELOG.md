@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Controller:** the finished-Job TTL (`Job.spec.ttlSecondsAfterFinished`)
+  is the new `--job-ttl-seconds` flag instead of a compile-time constant;
+  default unchanged at `3600`. The Helm chart exposes it as
+  `manager.jobTTLSeconds`. (#22)
 - **Controller:** hostnames in a Task's egress allowlist are re-resolved
   while the Task is not terminal and the NetworkPolicy is updated when the
   resolved IPs change, so CDN/anycast rotation no longer silently breaks

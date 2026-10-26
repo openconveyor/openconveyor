@@ -28,9 +28,10 @@ const (
 	// the AgentClass author is doing something we explicitly forbid.
 	nonRootUID int64 = 65532
 
-	// defaultTTLSeconds is how long a finished Job sticks around so its
-	// logs stay readable. An hour is enough for a human to notice + triage.
-	defaultTTLSeconds int32 = 3600
+	// DefaultJobTTLSeconds is the default for --job-ttl-seconds: how long a
+	// finished Job sticks around so its logs stay readable. An hour is
+	// enough for a human to notice + triage.
+	DefaultJobTTLSeconds int32 = 3600
 
 	// scratchVolumeName is an emptyDir mounted at /tmp so agents have a
 	// writable path despite readOnlyRootFilesystem.
@@ -70,6 +71,7 @@ func buildServiceAccount(task *conveyorv1alpha1.Task) *corev1.ServiceAccount {
 //   - egress is governed externally by the Task's NetworkPolicy
 //   - activeDeadlineSeconds mandatory — Task.spec.resources.timeout bounds cost
 //   - backoffLimit=0 — agent runs are expensive; no blind retries
+//   - ttlSecondsAfterFinished from the controller's --job-ttl-seconds
 //
 // The caller is expected to have already unioned agent-required secrets
 // with task-declared secrets into `effectiveSecrets`, and to have
@@ -78,6 +80,7 @@ func buildJob(
 	task *conveyorv1alpha1.Task,
 	agent *conveyorv1alpha1.ClusterAgentClass,
 	effectiveSecrets []string,
+	ttlSeconds int32,
 ) (*batchv1.Job, error) {
 	secretVolumes, secretMounts := policy.BuildSecretVolumes(effectiveSecrets)
 	prompt, err := policy.BuildPromptProjection(task.Name, task.Spec.Prompt, agent.Spec.Inputs)
@@ -180,7 +183,7 @@ func buildJob(
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            new(int32(0)),
 			ActiveDeadlineSeconds:   new(int64(task.Spec.Resources.Timeout.Seconds())),
-			TTLSecondsAfterFinished: new(defaultTTLSeconds),
+			TTLSecondsAfterFinished: new(ttlSeconds),
 			Template:                pod,
 		},
 	}, nil
