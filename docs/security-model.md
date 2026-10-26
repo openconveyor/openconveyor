@@ -15,7 +15,12 @@ Every Task gets a `NetworkPolicy` that applies
 `spec.permissions.egress` is empty, there are **zero egress rules** —
 the pod cannot reach anything, not even DNS. When egress is declared,
 DNS to `kube-system/k8s-app=kube-dns` on 53/udp+tcp is added, plus
-the allowlisted CIDRs/hostnames (all TCP/UDP ports).
+the allowlisted CIDRs/hostnames on **port 443 only** (TCP and UDP, the
+latter for HTTP/3). A Task that needs other ports lists them in
+`spec.permissions.egressPorts`, which replaces the default for every
+allowlist entry; the DNS rule keeps port 53 regardless. There is no
+"all ports" setting. Ports are a separate field rather than a `:port`
+suffix on entries because IPv6 CIDRs contain colons.
 
 Hostnames are resolved to IPs at reconcile time. That is a snapshot:
 if an allowlisted hostname's DNS record changes after the Task is

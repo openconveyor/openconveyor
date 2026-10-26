@@ -60,6 +60,11 @@ func (s StaticResolver) LookupHost(_ context.Context, host string) ([]string, er
 	return s.Hosts[host], nil
 }
 
+// DefaultEgressPort is the only destination port the egress allowlist
+// opens when spec.permissions.egressPorts is unset. HTTPS covers every
+// API an agent normally talks to; anything else must be declared.
+const DefaultEgressPort int32 = 443
+
 // DNS egress target: the stock CoreDNS label set on every mainstream
 // k8s distro, reached on the standard DNS port.
 const (
@@ -83,7 +88,8 @@ const (
 //
 //   - DNS (53/udp + tcp) to kube-system/k8s-app=kube-dns — needed for
 //     hostname entries to be useful from inside the pod.
-//   - Each allowlisted egress target on all TCP and UDP ports.
+//   - Each allowlisted egress target on the given ports (TCP and UDP),
+//     or on DefaultEgressPort alone when ports is empty.
 //
 // Hostnames are resolved once at reconcile time. DNS-based allowlists
 // are a best-effort snapshot; for stable FQDN enforcement, users should
@@ -94,6 +100,7 @@ func BuildNetworkPolicy(
 	resolver Resolver,
 	taskName, namespace string,
 	egress []string,
+	ports []int32,
 ) (*networkingv1.NetworkPolicy, error) {
 	cidrs, err := resolveEgress(ctx, resolver, egress)
 	if err != nil {
@@ -105,7 +112,8 @@ func BuildNetworkPolicy(
 		rules = append(rules, dnsEgressRule())
 		if len(cidrs) > 0 {
 			rules = append(rules, networkingv1.NetworkPolicyEgressRule{
-				To: toIPBlocks(cidrs),
+				To:    toIPBlocks(cidrs),
+				Ports: egressPorts(ports),
 			})
 		}
 	}
@@ -196,6 +204,27 @@ func toIPBlocks(cidrs []string) []networkingv1.NetworkPolicyPeer {
 		})
 	}
 	return peers
+}
+
+// egressPorts expands the declared ports (DefaultEgressPort when none)
+// into one TCP and one UDP entry each, sorted and de-duplicated. Both
+// protocols are opened because the previous rule allowed both and
+// HTTP/3 runs over UDP 443.
+func egressPorts(ports []int32) []networkingv1.NetworkPolicyPort {
+	if len(ports) == 0 {
+		ports = []int32{DefaultEgressPort}
+	}
+	ports = slices.Sorted(slices.Values(ports))
+	ports = slices.Compact(ports)
+	out := make([]networkingv1.NetworkPolicyPort, 0, 2*len(ports))
+	for _, p := range ports {
+		port := new(intstr.FromInt32(p))
+		out = append(out,
+			networkingv1.NetworkPolicyPort{Protocol: ptr.To(corev1.ProtocolTCP), Port: port},
+			networkingv1.NetworkPolicyPort{Protocol: ptr.To(corev1.ProtocolUDP), Port: port},
+		)
+	}
+	return out
 }
 
 // dnsEgressRule allows DNS queries to any pod labeled k8s-app=kube-dns in

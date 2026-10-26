@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **Security:** the egress allowlist now opens **port 443 only** (TCP and
+  UDP) on the resolved CIDRs instead of every port. A Task whose agent
+  talks to an allowlisted host on another port (SSH to `github.com`, a
+  database, a non-standard HTTPS port) must list the ports in the new
+  `spec.permissions.egressPorts` field, which replaces the default for all
+  entries; the DNS rule keeps port 53. (#24)
+
 ### Added
+
+- **API:** `spec.permissions.egressPorts` on `Task` (and on the Task
+  template of `ClusterTriggerClass`): up to 16 distinct ports in 1–65535,
+  applied to every egress allowlist entry; unset means `[443]`. (#24)
 
 - **Controller:** Kubernetes Events on the Task so `kubectl describe task`
   shows what happened (#20). A `Normal` Event per phase transition

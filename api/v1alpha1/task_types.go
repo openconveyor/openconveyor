@@ -77,6 +77,18 @@ type Permissions struct {
 	// +kubebuilder:validation:items:XValidation:rule="isCIDR(self) || isIP(self) || self.matches('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*[.]?$')",message="must be a DNS name, an IP address or a CIDR block"
 	Egress []string `json:"egress,omitempty"`
 
+	// egressPorts restricts every egress allowlist entry to these
+	// destination ports (TCP and UDP). Unset means [443]. It does not
+	// apply to the DNS rule, which always uses port 53. Ports are a
+	// separate field rather than a ":port" suffix on egress entries
+	// because IPv6 CIDRs contain colons.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Minimum=1
+	// +kubebuilder:validation:items:Maximum=65535
+	EgressPorts []int32 `json:"egressPorts,omitempty"`
+
 	// rbac is the list of Kubernetes RBAC rules the Task needs. Empty means
 	// the Task has no ServiceAccount token and cannot talk to the k8s API.
 	// +optional
