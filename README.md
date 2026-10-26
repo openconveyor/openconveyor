@@ -91,19 +91,38 @@ gets garbage-collected with it.
 Requirements: `kubectl`, a Kubernetes 1.29+ cluster (k3s / kind / EKS /
 anything — 1.29 is needed for the CEL admission validation on the CRDs).
 
+You also need an Anthropic API key. The sample Task declares a
+`github-token` Secret too (the implementer agent mounts it for the
+repo-driven flows in [`examples/`](examples/)); any non-empty value
+works for the smoke test below.
+
 ```sh
 # 1. Install CRDs + controller. Pulls the v0.2.1 multi-arch image
 #    (linux/amd64 + linux/arm64) from ghcr.io/openconveyor/conveyor.
 kubectl apply -f https://github.com/openconveyor/openconveyor/releases/download/v0.2.1/install.yaml
 
-# 2. Apply the sample AgentClass + a Task.
+# 2. Create the Task namespace and the Secrets the sample Task mounts.
+#    Secrets are projected as files at /run/secrets/<name>/<key>; the
+#    reference agents export them as ANTHROPIC_API_KEY / GITHUB_TOKEN.
+kubectl create namespace conveyor-tasks
+kubectl -n conveyor-tasks create secret generic anthropic-api-key \
+  --from-literal=key="$ANTHROPIC_API_KEY"
+kubectl -n conveyor-tasks create secret generic github-token \
+  --from-literal=token="${GITHUB_TOKEN:-unused}"
+
+# 3. Apply the sample AgentClasses + a Task, then watch it run.
 kubectl apply -k https://github.com/openconveyor/openconveyor//config/samples?ref=v0.2.1
-kubectl get tasks -w
+kubectl -n conveyor-tasks get tasks -w
 ```
 
-The controller lands in the `conveyor-system` namespace. Sample Tasks
-land in `conveyor-tasks`. See [`docs/security-model.md`](docs/security-model.md)
-for the four guarantees the controller enforces on every Task it spawns.
+The Task goes `Pending` → `Running` → `Completed` in about a minute
+(the first run pulls the agent image). Read what the agent said with
+`kubectl -n conveyor-tasks logs job/task-sample`, and `kubectl -n
+conveyor-tasks describe task task-sample` for the Events. The
+controller lives in the `conveyor-system` namespace; the sample
+kustomization puts the Task in `conveyor-tasks`. See
+[`docs/security-model.md`](docs/security-model.md) for the four
+guarantees the controller enforces on every Task it spawns.
 
 ### Install via Helm
 

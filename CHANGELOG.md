@@ -102,6 +102,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CI runs test the same Kubernetes version; CI moves to kind v0.33.0.
   (#37)
 
+### Fixed
+
+- **Docs:** the README quick start now works end to end (#29). It creates
+  the `conveyor-tasks` namespace and the two Secrets the sample Task mounts
+  (ported from `examples/README.md`), the sample Task sets
+  `metadata.namespace: conveyor-tasks` so the README's claim is true, and the sample
+  Task's prompt is a repo-less smoke test that reaches `Completed` with
+  only an Anthropic key instead of a PR-opening prompt that could never
+  succeed without `TARGET_REPO`.
+
 ## [0.2.1] — 2026-10-25
 
 Toolchain and dependency release. No behaviour change; same CRDs,
