@@ -148,6 +148,16 @@ type TaskSpec struct {
 	// resources bounds CPU/memory/wall-clock.
 	// +required
 	Resources TaskResources `json:"resources"`
+
+	// ttlSecondsAfterFinished deletes the Task (and, through ownership,
+	// everything it spawned) this many seconds after it reaches a terminal
+	// phase (Completed, Failed or TimedOut). Same semantics as the Job
+	// field of the same name. Unset falls back to the controller's
+	// --task-ttl-seconds; unset at both levels means the Task is never
+	// deleted automatically.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
 }
 
 // TaskPhase is a simple lifecycle marker surfaced on status.

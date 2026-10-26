@@ -107,6 +107,12 @@ type TaskTemplate struct {
 	// +required
 	Resources TaskResources `json:"resources"`
 
+	// ttlSecondsAfterFinished is copied into every emitted Task. Webhook
+	// Tasks accumulate without it; see Task.spec.ttlSecondsAfterFinished.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
+
 	// mappings populate fields of the emitted Task from the webhook payload.
 	// +optional
 	Mappings []FieldMapping `json:"mappings,omitempty"`

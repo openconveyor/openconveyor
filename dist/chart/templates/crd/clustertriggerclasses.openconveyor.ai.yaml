@@ -282,6 +282,13 @@ spec:
                     required:
                     - timeout
                     type: object
+                  ttlSecondsAfterFinished:
+                    description: |-
+                      ttlSecondsAfterFinished is copied into every emitted Task. Webhook
+                      Tasks accumulate without it; see Task.spec.ttlSecondsAfterFinished.
+                    format: int32
+                    minimum: 0
+                    type: integer
                 required:
                 - agent
                 - resources

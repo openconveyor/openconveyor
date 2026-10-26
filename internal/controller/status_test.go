@@ -9,6 +9,7 @@ package controller
 
 import (
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -250,5 +251,66 @@ func TestSetStatusConditionRefreshesObservedGeneration(t *testing.T) {
 	}
 	if got.ObservedGeneration != 2 {
 		t.Errorf("ObservedGeneration = %d, want 2", got.ObservedGeneration)
+	}
+}
+
+// TestDeletionDeadline pins the Task GC arithmetic (#21): spec TTL beats
+// the controller default, completionTime beats the Ready transition
+// time, and no TTL anywhere means never.
+func TestDeletionDeadline(t *testing.T) {
+	finished := metav1.NewTime(time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC))
+	transition := metav1.NewTime(finished.Add(-time.Minute))
+	ttl := func(s int32) *int32 { return &s }
+
+	base := func() *conveyorv1alpha1.Task {
+		return &conveyorv1alpha1.Task{
+			Status: conveyorv1alpha1.TaskStatus{
+				Phase:          conveyorv1alpha1.TaskPhaseFailed,
+				CompletionTime: &finished,
+				Conditions: []metav1.Condition{{
+					Type: conditionReady, Status: metav1.ConditionFalse, Reason: reasonFailed,
+					LastTransitionTime: transition,
+				}},
+			},
+		}
+	}
+
+	tests := []struct {
+		name       string
+		mutate     func(*conveyorv1alpha1.Task)
+		defaultTTL *int32
+		want       time.Time
+		wantOK     bool
+	}{
+		{"no TTL anywhere → never", func(*conveyorv1alpha1.Task) {}, nil, time.Time{}, false},
+		{"spec TTL from completionTime", func(t *conveyorv1alpha1.Task) {
+			t.Spec.TTLSecondsAfterFinished = ttl(600)
+		}, nil, finished.Add(10 * time.Minute), true},
+		{"controller default when spec unset", func(*conveyorv1alpha1.Task) {}, ttl(60), finished.Add(time.Minute), true},
+		{"spec overrides controller default", func(t *conveyorv1alpha1.Task) {
+			t.Spec.TTLSecondsAfterFinished = ttl(0)
+		}, ttl(3600), finished.Time, true},
+		{"falls back to the Ready transition time", func(t *conveyorv1alpha1.Task) {
+			t.Spec.TTLSecondsAfterFinished = ttl(60)
+			t.Status.CompletionTime = nil
+		}, nil, transition.Add(time.Minute), true},
+		{"no timestamp at all → never", func(t *conveyorv1alpha1.Task) {
+			t.Spec.TTLSecondsAfterFinished = ttl(60)
+			t.Status.CompletionTime = nil
+			t.Status.Conditions = nil
+		}, nil, time.Time{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task := base()
+			tt.mutate(task)
+			got, ok := deletionDeadline(task, tt.defaultTTL)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok && !got.Equal(tt.want) {
+				t.Errorf("deadline = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

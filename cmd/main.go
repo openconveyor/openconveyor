@@ -80,6 +80,7 @@ type flags struct {
 	triggerNamespace     string
 	egressRefresh        time.Duration
 	jobTTLSeconds        int
+	taskTTLSeconds       int
 }
 
 // defaultEgressRefresh bounds how long a Task's NetworkPolicy can lag a
@@ -114,6 +115,10 @@ func parseFlags() (flags, zap.Options) {
 	flag.IntVar(&fl.jobTTLSeconds, "job-ttl-seconds", int(controller.DefaultJobTTLSeconds),
 		"Seconds a finished Task Job (and its logs) is kept before Kubernetes deletes it "+
 			"(Job.spec.ttlSecondsAfterFinished). 0 deletes immediately.")
+	flag.IntVar(&fl.taskTTLSeconds, "task-ttl-seconds", -1,
+		"Cluster-wide default for Task.spec.ttlSecondsAfterFinished: seconds after a Task reaches a "+
+			"terminal phase before it is deleted. A Task's own value wins. Negative (the default) means "+
+			"Tasks without their own TTL are never deleted automatically.")
 	flag.DurationVar(&fl.egressRefresh, "egress-refresh-interval", defaultEgressRefresh,
 		"How often a running Task whose egress allowlist contains hostnames is re-resolved "+
 			"and its NetworkPolicy updated. 0 disables re-resolution.")
@@ -234,6 +239,14 @@ func run() error {
 	if fl.jobTTLSeconds < 0 || fl.jobTTLSeconds > math.MaxInt32 {
 		return fmt.Errorf("--job-ttl-seconds must be between 0 and %d, got %d", math.MaxInt32, fl.jobTTLSeconds)
 	}
+	if fl.taskTTLSeconds > math.MaxInt32 {
+		return fmt.Errorf("--task-ttl-seconds must be at most %d, got %d", math.MaxInt32, fl.taskTTLSeconds)
+	}
+	var taskTTL *int32
+	if fl.taskTTLSeconds >= 0 {
+		v := int32(fl.taskTTLSeconds) //nolint:gosec // range-checked above
+		taskTTL = &v
+	}
 
 	tlsOpts := buildTLSOpts(fl)
 
@@ -275,6 +288,7 @@ func run() error {
 		Scheme:                mgr.GetScheme(),
 		EgressRefreshInterval: fl.egressRefresh,
 		JobTTLSeconds:         int32(fl.jobTTLSeconds), //nolint:gosec // range-checked above
+		DefaultTaskTTLSeconds: taskTTL,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		return fmt.Errorf("create Task controller: %w", err)
 	}

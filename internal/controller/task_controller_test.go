@@ -570,6 +570,93 @@ var _ = Describe("Task Controller", func() {
 		})
 	})
 
+	Context("Task GC — terminal Tasks are deleted after ttlSecondsAfterFinished", func() {
+		ttl := func(s int32) *int32 { return &s }
+
+		// finish creates the Task, reconciles it into a Job, fails the Job and
+		// reconciles once more so the Task reaches the terminal Failed phase.
+		finish := func(r *TaskReconciler, opts ...func(*conveyorv1alpha1.Task)) {
+			ExpectWithOffset(1, k8sClient.Create(ctx, newTask(taskName, taskNamespace, opts...))).To(Succeed())
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+
+			var job batchv1.Job
+			ExpectWithOffset(1, k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Failed = 1
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+				batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+			)
+			ExpectWithOffset(1, k8sClient.Status().Update(ctx, &job)).To(Succeed())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+
+			var got conveyorv1alpha1.Task
+			ExpectWithOffset(1, k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
+			ExpectWithOffset(1, got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseFailed))
+		}
+		withTTL := func(s int32) func(*conveyorv1alpha1.Task) {
+			return func(t *conveyorv1alpha1.Task) { t.Spec.TTLSecondsAfterFinished = ttl(s) }
+		}
+
+		It("deletes a terminal Task once its TTL has elapsed", func() {
+			r := reconciler()
+			finish(r, withTTL(0))
+
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeZero())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, taskKey, &conveyorv1alpha1.Task{}))
+			}, eventuallyTimeout, eventuallyPoll).Should(BeTrue(), "Task must be deleted")
+		})
+
+		It("keeps a terminal Task and requeues until the TTL elapses", func() {
+			r := reconciler()
+			finish(r, withTTL(3600))
+
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(And(BeNumerically(">", 50*time.Minute), BeNumerically("<=", time.Hour)))
+			Expect(k8sClient.Get(ctx, taskKey, &conveyorv1alpha1.Task{})).To(Succeed())
+		})
+
+		It("never deletes when neither the Task nor the controller sets a TTL", func() {
+			r := reconciler()
+			finish(r)
+
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeZero())
+			Expect(k8sClient.Get(ctx, taskKey, &conveyorv1alpha1.Task{})).To(Succeed())
+		})
+
+		It("applies the controller default when the Task sets no TTL", func() {
+			r := reconciler()
+			r.DefaultTaskTTLSeconds = ttl(0)
+			finish(r)
+
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, taskKey, &conveyorv1alpha1.Task{}))
+			}, eventuallyTimeout, eventuallyPoll).Should(BeTrue(), "controller default must delete the Task")
+		})
+
+		It("lets the Task's own TTL override the controller default", func() {
+			r := reconciler()
+			r.DefaultTaskTTLSeconds = ttl(0)
+			finish(r, withTTL(3600))
+
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeNumerically(">", 0))
+			Expect(k8sClient.Get(ctx, taskKey, &conveyorv1alpha1.Task{})).To(Succeed())
+		})
+	})
+
 	Context("prompt projection — inline prompts go through an owned ConfigMap", func() {
 		const (
 			promptAgentName = "prompt-reader"

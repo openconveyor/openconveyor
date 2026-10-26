@@ -75,6 +75,7 @@ spec:
     cpu:     "1"
     memory:  1Gi
     timeout: 30m
+  ttlSecondsAfterFinished: 86400   # optional: delete the Task a day after it finishes
 ```
 
 A controller reconciles the Task into a hardened set of owned
@@ -149,6 +150,9 @@ Egress hostnames are re-resolved while a Task runs so NetworkPolicies
 follow DNS changes; tune or disable with `--egress-refresh-interval`
 (default `5m`, `0` disables). Finished Jobs (and their logs) are kept
 for `--job-ttl-seconds` (default `3600`; Helm: `manager.jobTTLSeconds`).
+Terminal Tasks are deleted after `spec.ttlSecondsAfterFinished`, or after
+the cluster-wide `--task-ttl-seconds` when the Task sets none (Helm:
+`manager.taskTTLSeconds`); unset at both levels keeps them forever.
 
 ## Examples
 

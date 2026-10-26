@@ -61,6 +61,10 @@ type TaskReconciler struct {
 	// deletes it. Set from --job-ttl-seconds; DefaultJobTTLSeconds when
 	// the operator does not care.
 	JobTTLSeconds int32
+	// DefaultTaskTTLSeconds is the cluster-wide fallback for
+	// spec.ttlSecondsAfterFinished (--task-ttl-seconds). Nil means Tasks
+	// that set no TTL of their own are never deleted automatically.
+	DefaultTaskTTLSeconds *int32
 }
 
 var _ reconcile.Reconciler = (*TaskReconciler)(nil)
@@ -89,9 +93,10 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	// Terminal Tasks are never reconciled again: once the Job finishes,
 	// its TTLSecondsAfterFinished deletion queues a reconcile that would
-	// otherwise recreate the Job and re-run a side-effectful agent.
+	// otherwise recreate the Job and re-run a side-effectful agent. The
+	// only thing left to do for them is garbage collection.
 	if isTerminal(task.Status.Phase) {
-		return ctrl.Result{}, nil
+		return r.collectTerminal(ctx, &task)
 	}
 
 	if err := validateTask(&task); err != nil {
@@ -176,6 +181,24 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	// alive and let ensureNetworkPolicy patch in the current set.
 	if r.EgressRefreshInterval > 0 && !isTerminal(task.Status.Phase) && policy.HasHostnames(effectiveEgress) {
 		return ctrl.Result{RequeueAfter: r.EgressRefreshInterval}, nil
+	}
+	return ctrl.Result{}, nil
+}
+
+// collectTerminal deletes a terminal Task once its TTL has elapsed, or
+// requeues for the remaining time. Owned resources go with it through
+// their controller references. Without a TTL the Task is left alone.
+func (r *TaskReconciler) collectTerminal(ctx context.Context, task *conveyorv1alpha1.Task) (ctrl.Result, error) {
+	deadline, ok := deletionDeadline(task, r.DefaultTaskTTLSeconds)
+	if !ok {
+		return ctrl.Result{}, nil
+	}
+	if remaining := time.Until(deadline); remaining > 0 {
+		return ctrl.Result{RequeueAfter: remaining}, nil
+	}
+	logf.FromContext(ctx).Info("Deleted terminal Task after its TTL", "phase", task.Status.Phase, "deadline", deadline)
+	if err := r.Delete(ctx, task, client.Preconditions{UID: &task.UID}); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	return ctrl.Result{}, nil
 }

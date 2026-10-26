@@ -56,6 +56,10 @@ func BuildTask(tmpl conveyorv1alpha1.TaskTemplate, body []byte) (*conveyorv1alph
 			Resources:   tmpl.Resources,
 		},
 	}
+	if tmpl.TTLSecondsAfterFinished != nil {
+		ttl := *tmpl.TTLSecondsAfterFinished
+		task.Spec.TTLSecondsAfterFinished = &ttl
+	}
 
 	prefix := tmpl.GenerateNamePrefix
 	if prefix == "" {
