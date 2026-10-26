@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CI/Supply chain:** release images carry an SBOM next to the existing
+  provenance attestation and are signed keyless with cosign against the
+  release workflow's OIDC identity; `docs/security-model.md` has the
+  `cosign verify` recipe. The release is gated on the lint, unit, e2e, chart
+  and agent-image workflows (reused via `workflow_call`) instead of
+  `make test` alone, and every GitHub Action is pinned to a commit SHA with
+  the version as a trailing comment. (#35)
 - **API/Controller:** Task garbage collection (#21). `spec.ttlSecondsAfterFinished`
   on `Task` (and on the `ClusterTriggerClass` Task template) deletes a
   terminal Task, with everything it owns, that many seconds after it reaches

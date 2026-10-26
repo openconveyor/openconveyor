@@ -9,9 +9,14 @@ on:
     branches:
       - main
   pull_request:
+  # Reused as a release gate by release.yml.
+  workflow_call:
 
+# Keyed on this file's name, not github.workflow: when called from
+# release.yml every gate would otherwise share one group and cancel
+# the others.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: agent-images-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -27,12 +32,10 @@ jobs:
           - claude-code-reporter
     steps:
       - name: Clone the code
-        uses: actions/checkout@v7
-
-      - uses: docker/setup-buildx-action@v3
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Build ${{ matrix.agent }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: agents/${{ matrix.agent }}
           file: agents/${{ matrix.agent }}/Dockerfile
