@@ -271,8 +271,9 @@ you start:
 - [`docs/status-reference.md`](docs/status-reference.md) lists every
   phase, `Ready` reason and Event that a Task can report, for triggers
   and dashboards.
-- [`docs/plugin-authoring.md`](docs/plugin-authoring.md) covers adding
-  a new AgentClass or ClusterTriggerClass.
+- [`docs/plugin-authoring.md`](docs/plugin-authoring.md) describes the
+  agent contract, the `ClusterAgentClass` and `ClusterTriggerClass`
+  fields, and the environment variables of the reference agents.
 - [`docs/enterprise-auth.md`](docs/enterprise-auth.md) shows how to
   give agents short-lived credentials with External Secrets.
 - [`docs/adr/`](docs/adr/) holds the required decisions. A PR that
