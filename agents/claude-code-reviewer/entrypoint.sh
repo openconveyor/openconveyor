@@ -5,15 +5,15 @@
 #   - /task/prompt                is the prompt (plain text). For the reference
 #                                 trigger this is the PR's html_url; the agent
 #                                 extracts it and reviews that PR.
-#   - /run/secrets/<name>/        holds declared Secrets, one dir per Secret
-#   - $PR_URL                     optional: explicit PR URL override
+#   - /run/secrets/<name>/        holds the declared Secrets, one dir per Secret
+#   - $PR_URL                     optional: an explicit PR URL override
 #   - $REVIEW_EVENT               optional: COMMENT (default) | APPROVE | REQUEST_CHANGES
 #   - exit 0 = success, non-zero = failure
 #
-# This script never `git push`es and never opens a PR. Its only side effect on
-# the git host is `gh pr review --comment`, which posts a review with body. The
-# `github-token` Secret should be scoped accordingly (PR read + PR comment;
-# no `repo` write).
+# This script never runs `git push` and never opens a PR. Its only side effect
+# on the git host is `gh pr review --comment`, which posts a review with a body.
+# Scope the `github-token` Secret to match (PR read + PR comment; no `repo`
+# write).
 
 set -euo pipefail
 
@@ -27,9 +27,9 @@ REVIEW_EVENT="${REVIEW_EVENT:-COMMENT}"
 
 [[ -r "$PROMPT_FILE" ]] || die "prompt file $PROMPT_FILE not readable"
 
-# Mirror the implementer's secret-fanout: a Secret directory becomes
-# $NAME_UPPER=<contents-of-its-single-key>, so standard CLIs find what they
-# expect (ANTHROPIC_API_KEY, GITHUB_TOKEN, ...).
+# This loop mirrors the secret fan-out of the implementer: a Secret directory
+# becomes $NAME_UPPER=<contents-of-its-single-key>. Standard CLIs then find
+# what they expect (ANTHROPIC_API_KEY, GITHUB_TOKEN, and more).
 if [[ -d "$SECRETS_ROOT" ]]; then
     while IFS= read -r -d '' file; do
         name=$(basename "$(dirname "$file")")
@@ -43,8 +43,8 @@ cd "$WORKDIR"
 
 prompt=$(cat "$PROMPT_FILE")
 
-# Resolve the PR URL. Explicit env wins; otherwise grep the prompt for the
-# first https://<host>/<owner>/<repo>/pull/<n> URL.
+# Resolve the PR URL. An explicit $PR_URL wins. Otherwise the script searches
+# the prompt for the first https://<host>/<owner>/<repo>/pull/<n> URL.
 pr_url="${PR_URL:-}"
 if [[ -z "$pr_url" ]]; then
     pr_url=$(printf '%s' "$prompt" \
@@ -64,10 +64,10 @@ log "fetching diff for $pr_url"
 diff_file="$WORKDIR/pr.diff"
 gh pr diff "$pr_url" > "$diff_file"
 
-# Hand the prompt + diff to claude. We pin --print so claude exits when done
-# and emits the review body to stdout; we capture it into a file because
-# `gh pr review --body-file` is the safe path for arbitrary content (no shell
-# escaping concerns vs. --body).
+# Send the prompt + diff to claude. The --print flag makes claude write the
+# review body to stdout and exit when it finishes. The script captures the body
+# in a file because `gh pr review --body-file` is the safe path for arbitrary
+# content. It avoids the shell escaping problems of --body.
 review_file="$WORKDIR/review.md"
 log "running claude (review event: $REVIEW_EVENT)"
 {

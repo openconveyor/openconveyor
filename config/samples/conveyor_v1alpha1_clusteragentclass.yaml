@@ -1,7 +1,7 @@
-# Reference ClusterAgentClass for the "implementer" archetype: reads a
-# prompt file, clones a repo, writes code, opens a PR. Permissions are the
-# minimum baseline every implementer run needs; Task.spec.permissions
-# unions with these at reconcile time.
+# Reference ClusterAgentClass for the "implementer" archetype. The agent reads
+# a prompt file, clones a repo, writes code, and opens a PR. The permissions
+# are the minimum baseline that every implementer Task needs. The controller
+# unions Task.spec.permissions with them at reconcile time.
 apiVersion: openconveyor.ai/v1alpha1
 kind: ClusterAgentClass
 metadata:
@@ -17,10 +17,10 @@ spec:
     prompt:
       mount: /task/prompt
   requires:
-    # Every implementer run needs the model API and a git host. The Task
-    # is still expected to declare the specific git host it targets — the
-    # AgentClass does not force a single host so the same image works for
-    # GitHub / GitLab / Forgejo once conveyor-git ships (post-v0.1.0).
+    # Every implementer Task needs the model API and a git host. The Task
+    # must still declare the specific git host that it targets. The
+    # AgentClass does not force a single host, so the same image works for
+    # GitHub, GitLab and Forgejo when conveyor-git ships (post-v0.1.0).
     egress:
       - api.anthropic.com
     secrets:

@@ -1,11 +1,11 @@
 # Linear → implementer Task.
 #
-# Fires when an Issue transitions into the "Ready for Agent" workflow
-# state. In Linear terms that is: type=Issue, action=update, and
-# data.state.name matches. Adjust the state name to whatever you use.
+# The trigger starts a Task when an Issue moves into the "Ready for Agent"
+# workflow state. In Linear terms that is: type=Issue, action=update, and
+# data.state.name matches. Change the state name to the name that you use.
 #
-# Linear signs webhooks with a raw hex HMAC-SHA256 in `Linear-Signature`
-# — no "sha256=" prefix.
+# Linear signs webhooks with a raw hex HMAC-SHA256 in `Linear-Signature`,
+# with no "sha256=" prefix.
 apiVersion: openconveyor.ai/v1alpha1
 kind: ClusterTriggerClass
 metadata:
@@ -38,15 +38,16 @@ spec:
       egress:
         - api.github.com
         - github.com
-    # Delete the Task a day after it finishes so webhook-driven Tasks
-    # do not accumulate (Task GC, same semantics as the Job field).
+    # The controller deletes the Task a day after it finishes, so
+    # webhook-driven Tasks do not accumulate (Task GC, same semantics as
+    # the Job field).
     ttlSecondsAfterFinished: 86400
     resources:
       cpu: "1"
       memory: 1Gi
       timeout: 30m
     mappings:
-      # Linear issue descriptions are Markdown and carry the bulk of intent.
+      # Linear issue descriptions are Markdown and carry most of the intent.
       - from: data.description
         to: prompt
         default: "See Linear issue — no description supplied"

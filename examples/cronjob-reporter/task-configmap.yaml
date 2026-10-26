@@ -1,7 +1,7 @@
-# ConfigMap holding the Task YAML that the CronJob applies on each tick.
-# Edit the prompt and the agent.config values (TARGET_REPO,
-# REPORT_ISSUE_URL — projected into the agent as env vars) to match
-# your project.
+# ConfigMap that holds the Task YAML that the CronJob applies on each tick.
+# Edit the prompt and the agent.config values to match your project. The
+# controller projects TARGET_REPO and REPORT_ISSUE_URL into the agent as
+# env vars.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -36,8 +36,9 @@ data:
         egress:
           - api.github.com
           - api.anthropic.com
-      # Delete the Task a day after it finishes so webhook-driven Tasks
-      # do not accumulate (Task GC, same semantics as the Job field).
+      # The controller deletes the Task a day after it finishes, so
+      # webhook-driven Tasks do not accumulate (Task GC, same semantics as
+      # the Job field).
       ttlSecondsAfterFinished: 86400
       resources:
         cpu: "500m"

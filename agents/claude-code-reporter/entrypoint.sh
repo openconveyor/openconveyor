@@ -3,15 +3,15 @@
 #
 # Contract with conveyor:
 #   - /task/prompt                is the reporting instruction (plain text)
-#   - /run/secrets/<name>/        holds declared Secrets, one dir per Secret
-#   - $TARGET_REPO                optional: GitHub repo (owner/name) to report on
-#   - $REPORT_ISSUE_URL           optional: GitHub Issue URL to post the report as
-#                                 a comment. Falls back to stdout if unset.
+#   - /run/secrets/<name>/        holds the declared Secrets, one dir per Secret
+#   - $TARGET_REPO                optional: the GitHub repo (owner/name) to report on
+#   - $REPORT_ISSUE_URL           optional: the GitHub Issue URL to post the report
+#                                 as a comment. If unset, the report goes to stdout.
 #   - exit 0 = success, non-zero = failure
 #
 # This script never clones a repo and never pushes code. Its only side effect
-# on the git host is posting an Issue comment via `gh issue comment`. The
-# github-token Secret should be scoped to Issue read + comment.
+# on the git host is an Issue comment that it posts with `gh issue comment`.
+# Scope the github-token Secret to Issue read + comment.
 
 set -euo pipefail
 
@@ -24,9 +24,10 @@ WORKDIR="${WORKDIR:-/tmp/work}"
 
 [[ -r "$PROMPT_FILE" ]] || die "prompt file $PROMPT_FILE not readable"
 
-# Secret files land at /run/secrets/<name>/<key>. For the common case where
-# the Secret has a single key, export SECRETNAME_UPPER=contents so standard
-# CLIs find what they expect (ANTHROPIC_API_KEY, GITHUB_TOKEN, ...).
+# conveyor projects the Secret files at /run/secrets/<name>/<key>. In the
+# common case the Secret has a single key. The loop then exports
+# SECRETNAME_UPPER=contents so that standard CLIs find what they expect
+# (ANTHROPIC_API_KEY, GITHUB_TOKEN, and more).
 if [[ -d "$SECRETS_ROOT" ]]; then
     while IFS= read -r -d '' file; do
         name=$(basename "$(dirname "$file")")
@@ -40,7 +41,7 @@ cd "$WORKDIR"
 
 prompt=$(cat "$PROMPT_FILE")
 
-# Gather context from the GitHub API if a target repo is specified.
+# Collect context from the GitHub API if the Task specifies a target repo.
 context_file="$WORKDIR/context.md"
 : > "$context_file"
 
@@ -65,7 +66,7 @@ if [[ -n "${TARGET_REPO:-}" ]]; then
         >> "$context_file" 2>/dev/null || log "warning: could not list open issues"
 fi
 
-# Hand the prompt + context to Claude to produce a human-readable report.
+# Send the prompt + context to Claude, which writes a human-readable report.
 report_file="$WORKDIR/report.md"
 log "running claude"
 {
@@ -80,8 +81,9 @@ if [[ ! -s "$report_file" ]]; then
     die "claude produced an empty report"
 fi
 
-# Deliver the report. GitHub Issue comment is the primary output channel;
-# stdout is the fallback so `kubectl logs` always works.
+# Deliver the report. A GitHub Issue comment is the primary output channel.
+# The script writes to stdout as the fallback so that `kubectl logs` always
+# works.
 if [[ -n "${REPORT_ISSUE_URL:-}" ]]; then
     log "posting report to $REPORT_ISSUE_URL"
     gh issue comment "$REPORT_ISSUE_URL" --body-file "$report_file"

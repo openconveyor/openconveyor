@@ -1,7 +1,7 @@
-# Reference ClusterAgentClass for the "reviewer" archetype: reads a prompt,
-# fetches a PR diff, posts a review comment. Never pushes code, never opens a
-# PR. The github-token Secret should be scoped to PR read + comment only;
-# see examples/github-pr-claude-code/README.md#security-notes.
+# Reference ClusterAgentClass for the "reviewer" archetype. The agent reads a
+# prompt, fetches a PR diff, and posts a review comment. It never pushes code
+# and never opens a PR. Scope the github-token Secret to PR read + comment
+# only; see examples/github-pr-claude-code/README.md#security-notes.
 apiVersion: openconveyor.ai/v1alpha1
 kind: ClusterAgentClass
 metadata:
@@ -14,14 +14,15 @@ spec:
   imagePullPolicy: IfNotPresent
   inputs:
     # The agent's entrypoint reads /task/prompt to learn what to review and
-    # which PR. Reference triggers map pull_request.html_url into the prompt
-    # so the agent can extract the PR coordinates with no extra wiring.
+    # which PR. The reference triggers map pull_request.html_url into the
+    # prompt. The agent can thus extract the PR coordinates with no extra
+    # configuration.
     prompt:
       mount: /task/prompt
   requires:
-    # Every reviewer run needs the model API. The git host is per-Task — the
-    # AgentClass does not pin one so the same image works for GitHub /
-    # GitLab / Forgejo once conveyor-git ships (post-v0.1.0).
+    # Every reviewer Task needs the model API. The git host is per-Task. The
+    # AgentClass does not pin one, so the same image works for GitHub, GitLab
+    # and Forgejo when conveyor-git ships (post-v0.1.0).
     egress:
       - api.anthropic.com
     secrets:

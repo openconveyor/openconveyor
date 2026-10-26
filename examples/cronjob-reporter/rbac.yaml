@@ -1,5 +1,5 @@
-# Minimal RBAC for the CronJob's pod to create Task CRs.
-# The ServiceAccount can only create Tasks in conveyor-tasks — nothing else.
+# Minimal RBAC that lets the CronJob's pod create Task CRs.
+# The ServiceAccount can only create Tasks in conveyor-tasks, nothing else.
 ---
 apiVersion: v1
 kind: ServiceAccount
