@@ -69,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agents/CI:** the three reference agent images pin their base image to a
+  minor tag plus digest (`node:22.23.4-bookworm-slim@sha256:…`) and the
+  Claude Code CLI to an exact version through a `CLAUDE_CODE_VERSION` build
+  arg (`2.1.311`), the same in all three; `gh` stays on the GitHub CLI
+  stable apt channel. Dependabot's docker entry now watches `agents/*`, and
+  a new `Agent Images` workflow builds the three images on every PR and runs
+  `claude --version` inside each, without pushing. (#36)
 - **Security:** the Task's ServiceAccount now sets
   `automountServiceAccountToken` to the same value as the Job pod (`false`
   unless `spec.permissions.rbac` is declared), and the reconciler restores
