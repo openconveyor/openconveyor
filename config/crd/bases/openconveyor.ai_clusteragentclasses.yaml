@@ -65,44 +65,49 @@ spec:
                 description: inputs describes how Task data reaches the agent container.
                 properties:
                   config:
-                    description: config is where Task.spec.agent.config is delivered
-                      (JSON).
+                    description: |-
+                      config is the location at which the controller delivers
+                      Task.spec.agent.config as JSON.
                     properties:
                       env:
                         description: |-
-                          env is the environment variable name. Mutually exclusive with mount.
-                          Prefer mount for secrets — env vars leak into /proc.
+                          env is the environment variable name. Do not set env together with
+                          mount. Use mount for secrets, because environment variables leak into
+                          /proc.
                         type: string
                       mount:
                         description: |-
-                          mount is an absolute filesystem path inside the container. Mutually
-                          exclusive with env.
+                          mount is an absolute filesystem path inside the container. Do not set
+                          mount together with env.
                         type: string
                     type: object
                   prompt:
-                    description: prompt is where Task.spec.prompt is delivered.
+                    description: prompt is the location at which the controller delivers
+                      Task.spec.prompt.
                     properties:
                       env:
                         description: |-
-                          env is the environment variable name. Mutually exclusive with mount.
-                          Prefer mount for secrets — env vars leak into /proc.
+                          env is the environment variable name. Do not set env together with
+                          mount. Use mount for secrets, because environment variables leak into
+                          /proc.
                         type: string
                       mount:
                         description: |-
-                          mount is an absolute filesystem path inside the container. Mutually
-                          exclusive with env.
+                          mount is an absolute filesystem path inside the container. Do not set
+                          mount together with env.
                         type: string
                     type: object
                 type: object
               requires:
                 description: |-
-                  requires declares permissions this agent always needs. Additive with
-                  Task.spec.permissions at reconcile time.
+                  requires declares the permissions that this agent always needs. The
+                  controller adds them to Task.spec.permissions at reconcile time.
                 properties:
                   egress:
                     description: |-
-                      egress allowlist the agent always needs (e.g. the LLM endpoint). Entries
-                      are DNS names, IP addresses or CIDR blocks, as in Task.spec.permissions.egress.
+                      egress is the allowlist that the agent always needs, for example the LLM
+                      endpoint. Entries are DNS names, IP addresses or CIDR blocks, as in
+                      Task.spec.permissions.egress.
                     items:
                       maxLength: 253
                       type: string
@@ -112,7 +117,9 @@ spec:
                     maxItems: 256
                     type: array
                   secrets:
-                    description: secrets the agent always needs mounted.
+                    description: |-
+                      secrets is the list of Secret names that the controller always mounts for
+                      the agent.
                     items:
                       type: string
                     type: array

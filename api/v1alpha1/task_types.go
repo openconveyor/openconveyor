@@ -29,48 +29,54 @@ type AgentRef struct {
 	Ref string `json:"ref"`
 
 	// config is non-secret, agent-specific configuration as a JSON object.
-	// Top-level scalar fields are projected into the agent container as
-	// environment variables named after the field (e.g. TARGET_REPO). The
-	// full JSON is additionally delivered at the AgentClass-declared
-	// inputs.config mount path and/or env var, when set. Never put secrets
-	// here — env vars leak into /proc; use permissions.secrets instead.
+	// The controller projects each top-level scalar field into the agent
+	// container as an environment variable with the name of the field, for
+	// example TARGET_REPO. When the ClusterAgentClass declares an inputs.config
+	// mount path, an environment variable, or both, the controller also
+	// delivers the full JSON there. Never put secrets here, because
+	// environment variables leak into /proc. Use permissions.secrets for secrets.
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Config *runtime.RawExtension `json:"config,omitempty"`
 }
 
 // PromptSource provides the prompt body, either inline or by reference.
-// Exactly one of inline / secretRef / configMapRef must be set.
+// Set exactly one of inline, secretRef and configMapRef.
 // +kubebuilder:validation:XValidation:rule="[has(self.inline) && self.inline.size() > 0, has(self.secretRef), has(self.configMapRef)].filter(x, x).size() == 1",message="exactly one of inline, secretRef or configMapRef must be set"
 type PromptSource struct {
-	// inline is the prompt body as a string. Capped at 256 KiB so the owned
-	// ConfigMap it is projected through stays well under the 1 MiB limit;
-	// use secretRef or configMapRef for larger prompts.
+	// inline is the prompt body as a string. The limit is 256 KiB, so that the
+	// owned ConfigMap through which the controller projects it stays under the
+	// 1 MiB limit. Use secretRef or configMapRef for a larger prompt.
 	// +optional
 	// +kubebuilder:validation:MaxLength=262144
 	Inline string `json:"inline,omitempty"`
 
-	// secretRef reads the prompt from a Secret key in the Task's namespace.
+	// secretRef names the Secret key, in the namespace of the Task, from which
+	// the controller reads the prompt.
 	// +optional
 	SecretRef *corev1.SecretKeySelector `json:"secretRef,omitempty"`
 
-	// configMapRef reads the prompt from a ConfigMap key in the Task's namespace.
+	// configMapRef names the ConfigMap key, in the namespace of the Task, from
+	// which the controller reads the prompt.
 	// +optional
 	ConfigMapRef *corev1.ConfigMapKeySelector `json:"configMapRef,omitempty"`
 }
 
 // Permissions is the least-privilege declaration for a Task.
-// Anything not listed here is denied by the controller.
+// The controller denies all access that this declaration does not list.
 type Permissions struct {
-	// secrets is the list of Secret names (in the Task's namespace) projected
-	// as files at /run/secrets/<name>/<key>, one file per Secret key. Env-var
-	// injection is intentionally not supported — env vars leak into /proc.
+	// secrets is the list of Secret names (in the namespace of the Task) that
+	// the controller projects as files at /run/secrets/<name>/<key>, one file
+	// for each Secret key. The controller does not support injection through
+	// environment variables by design, because environment variables leak
+	// into /proc.
 	// +optional
 	Secrets []string `json:"secrets,omitempty"`
 
-	// egress is the allowlist of DNS names, IP addresses or CIDR blocks the
-	// Task may reach. Default-deny otherwise. Resolved to NetworkPolicy egress
-	// rules at reconcile time.
+	// egress is the allowlist of DNS names, IP addresses or CIDR blocks that
+	// the Task can reach. Without entries, the controller denies all egress.
+	// The controller resolves the entries to NetworkPolicy egress rules at
+	// reconcile time.
 	// +optional
 	// +kubebuilder:validation:MaxItems=256
 	// +kubebuilder:validation:items:MaxLength=253
@@ -78,9 +84,9 @@ type Permissions struct {
 	Egress []string `json:"egress,omitempty"`
 
 	// egressPorts restricts every egress allowlist entry to these
-	// destination ports (TCP and UDP). Unset means [443]. It does not
+	// destination ports (TCP and UDP). The default is [443]. It does not
 	// apply to the DNS rule, which always uses port 53. Ports are a
-	// separate field rather than a ":port" suffix on egress entries
+	// separate field and not a ":port" suffix on the egress entries,
 	// because IPv6 CIDRs contain colons.
 	// +optional
 	// +listType=set
@@ -89,14 +95,16 @@ type Permissions struct {
 	// +kubebuilder:validation:items:Maximum=65535
 	EgressPorts []int32 `json:"egressPorts,omitempty"`
 
-	// rbac is the list of Kubernetes RBAC rules the Task needs. Empty means
-	// the Task has no ServiceAccount token and cannot talk to the k8s API.
+	// rbac is the list of Kubernetes RBAC rules that the Task needs. When it
+	// is empty, the Task has no ServiceAccount token and cannot call the
+	// Kubernetes API.
 	// +optional
 	RBAC []RBACRule `json:"rbac,omitempty"`
 }
 
-// RBACRule is a minimal Kubernetes RBAC policy rule. Mirrors rbacv1.PolicyRule
-// but kept local so the Task CRD schema does not transitively embed rbac/v1.
+// RBACRule is a minimal Kubernetes RBAC policy rule. It mirrors
+// rbacv1.PolicyRule. The type is local, so that the Task CRD schema does not
+// embed rbac/v1 transitively.
 type RBACRule struct {
 	// +required
 	// +kubebuilder:validation:MinItems=1
@@ -113,18 +121,18 @@ type RBACRule struct {
 
 // TaskResources bounds runtime cost.
 type TaskResources struct {
-	// cpu request/limit, e.g. "500m" or "1".
+	// cpu is the CPU request and limit, for example "500m" or "1".
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="isQuantity(self) && !quantity(self).isLessThan(quantity('0'))",message="must be a non-negative Kubernetes resource quantity, e.g. '500m' or '1'"
 	CPU string `json:"cpu,omitempty"`
 
-	// memory request/limit, e.g. "512Mi" or "1Gi".
+	// memory is the memory request and limit, for example "512Mi" or "1Gi".
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="isQuantity(self) && !quantity(self).isLessThan(quantity('0'))",message="must be a non-negative Kubernetes resource quantity, e.g. '512Mi' or '1Gi'"
 	Memory string `json:"memory,omitempty"`
 
-	// timeout is mandatory. The controller rejects Tasks without one.
-	// Mapped to Job.spec.activeDeadlineSeconds.
+	// timeout is mandatory. The controller rejects a Task without one.
+	// The controller maps it to Job.spec.activeDeadlineSeconds.
 	// +required
 	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="must be a valid duration greater than 0 (e.g. '30m')"
 	Timeout metav1.Duration `json:"timeout"`
@@ -132,35 +140,36 @@ type TaskResources struct {
 
 // TaskSpec defines the desired state of Task.
 type TaskSpec struct {
-	// agent selects the AgentClass that runs this Task.
+	// agent selects the ClusterAgentClass that runs this Task.
 	// +required
 	Agent AgentRef `json:"agent"`
 
-	// prompt provides the prompt body. Exactly one source must be set.
+	// prompt provides the prompt body. Set exactly one source.
 	// +required
 	Prompt PromptSource `json:"prompt"`
 
-	// permissions declares the Task's least-privilege requirements.
-	// Default is zero egress, zero secrets, zero RBAC.
+	// permissions declares the least-privilege requirements of the Task.
+	// The default is zero egress, zero secrets and zero RBAC.
 	// +optional
 	Permissions Permissions `json:"permissions,omitempty"`
 
-	// resources bounds CPU/memory/wall-clock.
+	// resources bounds the CPU, the memory and the wall-clock time.
 	// +required
 	Resources TaskResources `json:"resources"`
 
-	// ttlSecondsAfterFinished deletes the Task (and, through ownership,
-	// everything it spawned) this many seconds after it reaches a terminal
-	// phase (Completed, Failed or TimedOut). Same semantics as the Job
-	// field of the same name. Unset falls back to the controller's
-	// --task-ttl-seconds; unset at both levels means the Task is never
-	// deleted automatically.
+	// ttlSecondsAfterFinished is the number of seconds after which the
+	// controller deletes a terminal Task (Completed, Failed or TimedOut).
+	// Through ownership, Kubernetes then deletes everything that the Task
+	// created. The semantics are the same as for the Job field of the same
+	// name. When it is unset, the controller uses its --task-ttl-seconds
+	// flag. When both are unset, the controller never deletes the Task
+	// automatically.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
 }
 
-// TaskPhase is a simple lifecycle marker surfaced on status.
+// TaskPhase is a lifecycle marker that the controller reports in the status.
 // +kubebuilder:validation:Enum=Pending;Running;Completed;Failed;TimedOut
 type TaskPhase string
 
@@ -178,25 +187,27 @@ type TaskStatus struct {
 	// +optional
 	Phase TaskPhase `json:"phase,omitempty"`
 
-	// observedGeneration is the most recent .metadata.generation the
-	// controller has reconciled against. Consumers use it to detect stale
-	// status after a spec change.
+	// observedGeneration is the most recent .metadata.generation that the
+	// controller has reconciled. Consumers use it to detect a stale status
+	// after a spec change.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// jobName references the Job owned by this Task.
+	// jobName is the name of the Job that this Task owns.
 	// +optional
 	JobName string `json:"jobName,omitempty"`
 
-	// startTime is when the Job first started.
+	// startTime is the time at which the Job first started.
 	// +optional
 	StartTime *metav1.Time `json:"startTime,omitempty"`
 
-	// completionTime is when the Job finished (success or failure).
+	// completionTime is the time at which the Job finished, with success or
+	// with failure.
 	// +optional
 	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
 
-	// conditions surface reconciler state per Kubernetes API conventions.
+	// conditions report the reconciler state in the form that the Kubernetes
+	// API conventions define.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -211,8 +222,9 @@ type TaskStatus struct {
 // +kubebuilder:printcolumn:name="Completed",type=date,JSONPath=`.status.completionTime`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// Task is a single agent run: the orchestrator materializes a ServiceAccount,
-// Role, NetworkPolicy, and Job from this spec and tears them down when done.
+// Task is one requested run of an agent. The controller creates a
+// ServiceAccount, a Role, a NetworkPolicy and a Job from this spec. The
+// owner references remove them together with the Task.
 type Task struct {
 	metav1.TypeMeta `json:",inline"`
 
