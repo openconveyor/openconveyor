@@ -11,7 +11,13 @@
 # token mounted as `github-token` should be scoped to PR comment + read,
 # nothing more (see examples/github-pr-claude-code/README.md#security-notes).
 
-FROM node:22-bookworm-slim
+# Base image pinned to a minor tag plus digest; dependabot (docker
+# ecosystem, agents/*) bumps both together.
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
+
+# Claude Code CLI version, identical across the three reference agents.
+# Bumped by hand in chore(agents) PRs.
+ARG CLAUDE_CODE_VERSION=2.1.311
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -27,7 +33,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
 # conveyor enforces UID 65532 (see internal/controller/build.go:nonRootUID).
 # Pre-create the user so HOME resolution inside git/gh works even on a
