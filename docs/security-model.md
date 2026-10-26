@@ -1,36 +1,50 @@
 # Security Model
 
-OpenConveyor's reason to exist is the difference between _"we documented
-the safe way to run agents"_ and _"the API server refuses to give the
-agent anything it did not explicitly ask for."_ Four hard guarantees,
-all enforced by Kubernetes primitives, not by the agent image or by
+OpenConveyor exists for one difference. On one side: _"we documented
+the safe way to run agents."_ On the other side: _"the API server
+refuses to give the agent anything it did not explicitly ask for."_
+OpenConveyor makes four hard guarantees.
+Kubernetes primitives enforce all four, not the agent image and not the
 docs.
 
 ## The four guarantees
 
 ### 1. Default-deny egress
 
-Every Task gets a `NetworkPolicy` that applies
+Each Task gets a `NetworkPolicy` that applies
 `PolicyTypes: [Ingress, Egress]` to its pod. When
-`spec.permissions.egress` is empty, there are **zero egress rules** —
-the pod cannot reach anything, not even DNS. When egress is declared,
-DNS to `kube-system/k8s-app=kube-dns` on 53/udp+tcp is added, plus
-the allowlisted CIDRs/hostnames on **port 443 only** (TCP and UDP, the
-latter for HTTP/3). A Task that needs other ports lists them in
-`spec.permissions.egressPorts`, which replaces the default for every
-allowlist entry; the DNS rule keeps port 53 regardless. There is no
-"all ports" setting. Ports are a separate field rather than a `:port`
-suffix on entries because IPv6 CIDRs contain colons.
+`spec.permissions.egress` is empty, the policy has **zero egress
+rules**. The pod cannot reach anything, not even DNS.
 
-Hostnames are resolved to IPs at reconcile time. That is a snapshot,
-and CDN/anycast records rotate, so while a Task with hostnames in its
-allowlist is not terminal the controller re-resolves them every
-`--egress-refresh-interval` (default `5m`, `0` disables) and updates
-the NetworkPolicy when the set changed. Between refreshes the pod
-keeps talking to the previous IPs; connections to an IP that left the
-set are cut when the policy updates. For FQDN-level enforcement
-install Cilium and swap the policy generator for
-`CiliumNetworkPolicy` — that is the documented upgrade path.
+When the Task declares egress, the controller adds DNS to
+`kube-system/k8s-app=kube-dns` on 53/udp+tcp. It also adds the
+allowlisted CIDRs and hostnames on **port 443 only** (TCP and UDP; UDP
+for HTTP/3). A Task that needs other ports lists them in
+`spec.permissions.egressPorts`. That list replaces the default for each
+allowlist entry; the DNS rule keeps port 53 in all cases. There is no
+"all ports" setting. Ports are a separate field, not a `:port` suffix
+on an entry, because IPv6 CIDRs contain colons.
+
+```mermaid
+flowchart TD
+    q{egress list empty?}
+    q -->|yes| deny["zero egress rules (no DNS)"]
+    q -->|no| dns["DNS 53/udp+tcp to kube-dns"]
+    q -->|no| allow["allowlist CIDRs on egressPorts (default 443, TCP+UDP)"]
+    q -->|no| refresh["re-resolve hostnames every --egress-refresh-interval"]
+```
+
+The controller resolves hostnames to IPs at reconcile time. That is a
+snapshot, and CDN and anycast records rotate. Thus, while a Task with
+hostnames in its allowlist is not terminal, the controller re-resolves
+them every `--egress-refresh-interval` (default `5m`, `0` disables the
+refresh). It updates the NetworkPolicy when the set changed. Between
+refreshes the pod continues to connect to the previous IPs. The policy
+update cuts the connections to an IP that left the set.
+
+For FQDN-level enforcement, install Cilium and replace the policy
+generator with `CiliumNetworkPolicy`. That is the documented upgrade
+path.
 
 See `internal/policy/networkpolicy.go` and the Phase 2 envtest in
 `internal/controller/task_controller_test.go`.
@@ -38,126 +52,129 @@ See `internal/policy/networkpolicy.go` and the Phase 2 envtest in
 ### 2. Default-zero RBAC
 
 `pod.spec.automountServiceAccountToken` is `false` unless the Task
-declares `spec.permissions.rbac`. No ambient token in `/var/run` means
-no accidental cluster API calls from a compromised agent. The Task's
-ServiceAccount carries the same `automountServiceAccountToken` value,
-so a pod that someone else points at that SA gets no token either; the
-reconciler restores both if they are changed out-of-band.
+declares `spec.permissions.rbac`. Without an ambient token in
+`/var/run`, a compromised agent cannot make accidental cluster API
+calls. The Task's ServiceAccount carries the same
+`automountServiceAccountToken` value. Thus a pod that someone else
+points at that SA gets no token either. The reconciler restores both
+values if someone changes them outside the reconciler.
 
-When RBAC is declared, the reconciler materializes a namespaced
-`Role` + `RoleBinding` containing only the verbs listed. The
-ServiceAccount itself stays permission-less otherwise — the
-`RoleBinding` is the only thing granting it anything.
+When the Task declares RBAC, the reconciler creates a namespaced
+`Role` + `RoleBinding` that contain only the listed verbs. Otherwise
+the ServiceAccount has no permissions. The `RoleBinding` is the only
+object that grants it anything.
 
 Verify with `kubectl auth can-i --list --as=system:serviceaccount:<ns>:<task>`.
 
 ### 3. Declared secrets only
 
 `spec.permissions.secrets` is a list of Secret names. The reconciler
-projects each as a read-only volume at `/run/secrets/<name>/`, with one
-file per Secret key: `/run/secrets/<name>/<key>`. Nothing is ever
-exposed via env vars. The tradeoff:
+projects each Secret as a read-only volume at `/run/secrets/<name>/`,
+with one file per Secret key: `/run/secrets/<name>/<key>`. The
+controller never exposes a secret through an env var. The tradeoff:
 
-- Env vars live in `/proc/<pid>/environ` and are inherited by every
-  child process. A subprocess crashing to stderr with its env included
-  will leak.
-- Files have POSIX permissions and are explicit. The agent has to
-  read them deliberately; they do not travel with `exec`.
+- Env vars are in `/proc/<pid>/environ`, and each child process
+  inherits them. A subprocess that crashes to stderr with its env
+  included leaks them.
+- Files have POSIX permissions and are explicit. The agent must read
+  them on purpose; they do not travel with `exec`.
 
-Any Secret not listed is not mounted. `ls /run/secrets` in a zero-secret
-Task is empty.
+The controller does not mount a Secret that the Task does not list.
+`ls /run/secrets` in a zero-secret Task is empty.
 
-Because agents read secrets once at Job start, the values can rotate
-freely underneath — which makes short-lived, externally-minted
-credentials (e.g. GitHub App installation tokens refreshed by External
-Secrets Operator) a drop-in upgrade over static PATs. See
-[`enterprise-auth.md`](enterprise-auth.md).
+Agents read secrets once at Job start, so the values can rotate
+underneath without effect. Thus short-lived credentials that an
+external system creates are a direct upgrade over static PATs. One
+example is GitHub App installation tokens that External Secrets
+Operator refreshes. See [`enterprise-auth.md`](enterprise-auth.md).
 
 ### 4. Hard kill
 
-`spec.resources.timeout` is required; the controller rejects any Task
-without one with `reason=InvalidSpec`. The value maps to
-`Job.spec.activeDeadlineSeconds`. A runaway agent burning tokens is
-bounded in wall-clock.
+Each Task must set `spec.resources.timeout`. The controller rejects a
+Task without one with `reason=InvalidSpec`. The value maps to
+`Job.spec.activeDeadlineSeconds`. Thus a runaway agent that burns
+tokens has a wall-clock limit.
 
-Also: `backoffLimit: 0` — agent runs are expensive, never retry blindly.
+Also: `backoffLimit: 0`. Agent runs are expensive; the Job never
+retries blindly.
 
 ## Pod hardening (belt and suspenders)
 
-Every Job pod runs with, at **pod** level (`spec.securityContext`):
+Each Job pod runs with these values at **pod** level
+(`spec.securityContext`):
 
 - `runAsNonRoot: true`, `runAsUser: 65532`, `runAsGroup: 65532`
 - `seccompProfile.type: RuntimeDefault`
 - `restartPolicy: Never`
 
-and on the agent **container** (`containers[].securityContext`):
+and with these values on the agent **container**
+(`containers[].securityContext`):
 
 - `runAsNonRoot`, `runAsUser`, `runAsGroup` and `seccompProfile`
-  repeated, so the container stays hardened even if the pod-level
-  block is stripped by an admission mutation
+  again, so the container stays hardened even if an admission mutation
+  removes the pod-level block
 - `readOnlyRootFilesystem: true` (plus an `emptyDir` at `/tmp`)
 - `allowPrivilegeEscalation: false`
 - `capabilities.drop: [ALL]`
 
-Identity and seccomp sit on the pod because pod-level values also
-apply to containers injected after the fact (service-mesh sidecars)
-and are where the Pod Security Standards "restricted" profile reads
-them. The remaining three fields exist only on containers. All of
-this is set by the controller, independent of cluster-level Pod
+Identity and seccomp are on the pod for two reasons. Pod-level values
+also apply to containers that a mesh injects later (service-mesh
+sidecars). The Pod Security Standards "restricted" profile also reads
+them there. The remaining three fields exist only on containers. The
+controller sets all of these values, independent of cluster-level Pod
 Security admission. An agent image that refuses to start under these
-is doing something we deliberately forbid.
+values does something that we forbid on purpose.
 
 ## Controller permissions
 
-The manager's own ClusterRole is generated from `+kubebuilder:rbac`
-markers (`internal/controller/task_controller.go`,
-`internal/trigger/handler.go`). Two entries deserve explanation:
+The manager's own ClusterRole comes from `+kubebuilder:rbac` markers
+(`internal/controller/task_controller.go`,
+`internal/trigger/handler.go`). Two entries need an explanation:
 
-- **`secrets` / `get`, cluster-wide.** Used only by the trigger
-  adapter (ADR-0006) to read the HMAC key referenced by a
-  `ClusterTriggerClass`, from the adapter's own namespace. The
-  manager's client cache is disabled for Secrets (`cmd/main.go`), so
-  the controller never opens a cluster-wide Secret watch and never
-  holds Secrets in memory beyond a single lookup. There is no `list`
-  or `watch` verb.
-- **`clustertriggerclasses` / `get;list;watch`.** Route discovery for
-  the webhook adapter; served from the informer cache.
+- **`secrets` / `get`, cluster-wide.** Only the trigger adapter
+  (ADR-0006) uses it, to read the HMAC key that a `ClusterTriggerClass`
+  references, from the adapter's own namespace. The manager's client
+  cache is off for Secrets (`cmd/main.go`). Thus the controller never
+  opens a cluster-wide Secret watch and never holds a Secret in memory
+  beyond one lookup. There is no `list` or `watch` verb.
+- **`clustertriggerclasses` / `get;list;watch`.** The webhook adapter
+  uses it for route discovery. The informer cache serves it.
 
 ## Threat model
 
-**In scope.** A compromised agent image, or an agent whose prompt is
-hostile, should not be able to:
+**In scope.** A compromised agent image, or an agent with a hostile
+prompt, must not be able to:
 
-- Touch secrets it did not declare.
-- Call the k8s API beyond the verbs it declared.
-- Talk to hosts off its egress allowlist.
+- Touch secrets that it did not declare.
+- Call the k8s API beyond the verbs that it declared.
+- Connect to hosts that are not in its egress allowlist.
 - Exceed its declared wall-clock timeout.
-- Persist state beyond the Job's lifetime (readonly rootfs; TTL-based
+- Keep state beyond the Job's lifetime (read-only rootfs; TTL-based
   Job cleanup).
 
-**Out of scope.** OpenConveyor trusts the container runtime. A kernel
-exploit, a containerd CVE, or an agent that owns the node directly
-is not something NetworkPolicy can defend against. For untrusted
-agent code, pair OpenConveyor with `RuntimeClass=gvisor` or `kata` at
-the pod spec level, or swap the Job backend for `agent-sandbox`'s
-sandboxed CRD once we add that as an alternative (deferred).
+**Out of scope.** OpenConveyor trusts the container runtime.
+NetworkPolicy cannot defend against a kernel exploit, a containerd CVE,
+or an agent that owns the node directly. For untrusted agent code, pair
+OpenConveyor with `RuntimeClass=gvisor` or `kata` at the pod spec
+level. Or replace the Job backend with the sandboxed CRD of
+`agent-sandbox` when we add that as an alternative (deferred).
 
 We also do not defend against a malicious user with `create tasks`
-RBAC. Task authors are trusted to ask only for what they need;
-auditing declared permissions is the cluster operator's job.
+RBAC. We trust Task authors to ask only for what they need. The
+cluster operator audits the declared permissions.
 
 ## Supply chain
 
-Every release (`release.yml`, on a `v*` tag) runs the same lint, unit,
-e2e, chart and agent-image workflows a PR gets before anything is
-pushed, and every `uses:` in `.github/workflows/` is pinned to a commit
-SHA with the version as a trailing comment (dependabot keeps them
-current). The four images (`conveyor` and the three reference agents)
-are pushed with a BuildKit provenance attestation and SBOM and signed
-keyless with cosign against the workflow's OIDC identity. `govulncheck`
-runs on every PR.
+Each release (`release.yml`, on a `v*` tag) runs the same lint, unit,
+e2e, chart and agent-image workflows that a PR gets, before it pushes
+anything. The workflows pin each `uses:` in `.github/workflows/` to a
+commit SHA, with the version as a trailing comment (dependabot keeps
+them current). The release pushes the four images (`conveyor` and the
+three reference agents) with a BuildKit provenance attestation and an
+SBOM. It signs them keyless with cosign against the workflow's OIDC
+identity. `govulncheck` runs on each PR.
 
-Verify an image before deploying it:
+Verify an image before you deploy it:
 
 ```sh
 IMAGE=ghcr.io/openconveyor/conveyor:v0.3.0
@@ -172,13 +189,13 @@ docker buildx imagetools inspect "$IMAGE" --format '{{ json .SBOM }}'
 docker buildx imagetools inspect "$IMAGE" --format '{{ json .Provenance }}'
 ```
 
-A tag that fails `cosign verify` was not produced by this repository's
-release workflow. The same commands work for
+A tag that fails `cosign verify` did not come from the release workflow
+of this repository. The same commands work for
 `ghcr.io/openconveyor/agent-claude-{implementer,reviewer,reporter}`.
 
 ## Verification
 
-From a Task pod (run `kubectl debug` or edit the image to include
+From a Task pod (run `kubectl debug`, or edit the image to include
 `curl`/`sh`):
 
 ```sh
@@ -197,18 +214,20 @@ kubectl auth can-i --list \
 kubectl get networkpolicy <task> -o yaml    # deny-all ingress; declared egress only
 ```
 
-The `envtest` suite covers the positive path (policy objects are
-created correctly). The e2e suite (`make test-e2e`, kind) covers the
-negative path: a Task with no egress whose agent runs
+The `envtest` suite covers the positive path (the controller creates
+the policy objects correctly). The e2e suite (`make test-e2e`, kind)
+covers the negative path: a Task with no egress whose agent runs
 `wget https://example.com` must end `Failed` or `TimedOut`
 (`test/e2e/testdata/task_egress_denied.yaml`).
 
-One caveat the e2e spec works around rather than fixes: kind's CNI
-(kindnet with kube-network-policies) only starts filtering a pod's
-traffic once it has indexed the pod IP, about a second after the
-container starts, and a connection opened inside that window is
-accepted for its lifetime. The controller already creates the
+The e2e spec works around one caveat and does not fix it. The CNI of
+kind (kindnet with kube-network-policies) starts to filter a pod's
+traffic only after it has indexed the pod IP. That happens about one
+second after the container starts. The CNI accepts a connection that
+opens inside that window for its lifetime.
+
+The controller already creates the
 NetworkPolicy before the Job, so nothing on its side can shrink the
-window; it is a property of the CNI. CNIs that program policy at
-sandbox creation (Calico, Cilium) do not have it. Pick accordingly
-for production clusters.
+window. The window is a property of the CNI. CNIs that program the
+policy at sandbox creation (Calico, Cilium) do not have it. Select
+your CNI accordingly for production clusters.
