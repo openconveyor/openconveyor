@@ -79,6 +79,7 @@ func TestBuildTask(t *testing.T) {
 		Resources: conveyorv1alpha1.TaskResources{
 			Timeout: metav1.Duration{Duration: 30 * time.Minute},
 		},
+		TTLSecondsAfterFinished: func() *int32 { v := int32(86400); return &v }(),
 		Mappings: []conveyorv1alpha1.FieldMapping{
 			{From: "issue.title", To: "prompt"},
 			{From: "issue.number", To: "labels.issue-number"},
@@ -107,6 +108,9 @@ func TestBuildTask(t *testing.T) {
 	}
 	if task.Annotations["requester"] != "octocat" {
 		t.Errorf("annotations[requester] = %q, want octocat", task.Annotations["requester"])
+	}
+	if got := task.Spec.TTLSecondsAfterFinished; got == nil || *got != 86400 {
+		t.Errorf("TTLSecondsAfterFinished = %v, want 86400 copied from the template", got)
 	}
 	if got := task.Spec.Permissions.Secrets; len(got) != 1 || got[0] != "github-token" {
 		t.Errorf("permissions.secrets = %v, want [github-token]", got)
@@ -200,7 +204,7 @@ func TestBuildTask_ConfigMapping(t *testing.T) {
 		}
 	}
 
-	// The shared template's config must not be mutated by the merge.
+	// The merge must not mutate the config of the shared template.
 	if string(tmpl.Agent.Config.Raw) != `{"TARGET_BRANCH":"main","KEEP":"tmpl"}` {
 		t.Errorf("template config mutated: %s", tmpl.Agent.Config.Raw)
 	}

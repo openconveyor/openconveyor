@@ -33,7 +33,7 @@ import (
 	"github.com/openconveyor/openconveyor/internal/policy"
 )
 
-// Shared cadence for the Eventually polls sprinkled through the suite.
+// The shared cadence for the Eventually polls throughout the suite.
 const (
 	eventuallyTimeout = 5 * time.Second
 	eventuallyPoll    = 100 * time.Millisecond
@@ -84,15 +84,16 @@ var _ = Describe("Task Controller", func() {
 	ctx := context.Background()
 	taskKey := types.NamespacedName{Name: taskName, Namespace: taskNamespace}
 
-	// recorder captures the Events a reconcile emits; drained by
-	// recordedEvents. Replaced per spec so Events never leak across.
+	// recorder captures the Events that a reconcile emits; recordedEvents
+	// drains it. Each spec replaces it, so Events never leak across specs.
 	var recorder *events.FakeRecorder
 
 	reconciler := func() *TaskReconciler {
 		return &TaskReconciler{
-			Client:   k8sClient,
-			Scheme:   k8sClient.Scheme(),
-			Recorder: recorder,
+			Client:        k8sClient,
+			Scheme:        k8sClient.Scheme(),
+			Recorder:      recorder,
+			JobTTLSeconds: DefaultJobTTLSeconds,
 			Resolver: policy.StaticResolver{
 				Hosts: map[string][]string{
 					"api.example.com": {"203.0.113.10"},
@@ -115,7 +116,7 @@ var _ = Describe("Task Controller", func() {
 		}
 	}
 
-	// ensureAgentClass gets-or-creates a ClusterAgentClass and registers
+	// ensureAgentClass gets or creates a ClusterAgentClass and registers
 	// its deletion for cleanup after the spec.
 	ensureAgentClass := func(spec conveyorv1alpha1.ClusterAgentClassSpec, name string) {
 		agent := &conveyorv1alpha1.ClusterAgentClass{
@@ -133,7 +134,7 @@ var _ = Describe("Task Controller", func() {
 		})
 	}
 
-	// readyCondition fetches the "Ready" condition off a Task's status.
+	// readyConditionOf fetches the "Ready" condition from a Task's status.
 	readyConditionOf := func(task *conveyorv1alpha1.Task) *metav1.Condition {
 		cond := meta.FindStatusCondition(task.Status.Conditions, conditionReady)
 		ExpectWithOffset(1, cond).NotTo(BeNil(), "expected a Ready condition")
@@ -157,9 +158,10 @@ var _ = Describe("Task Controller", func() {
 		if err := k8sClient.Get(ctx, taskKey, task); err == nil {
 			Expect(k8sClient.Delete(ctx, task)).To(Succeed())
 		}
-		// Manually delete owned resources — envtest does not run the GC controller
-		// that would cascade from ownerReferences. Also poll until the Job is gone
-		// so the next spec doesn't hit a stale immutable Job from this one.
+		// Delete the owned resources by hand: envtest does not run the GC
+		// controller that cascades from ownerReferences. Also poll until the Job
+		// no longer exists, so the next spec does not find a stale immutable Job
+		// from this one.
 		propagation := metav1.DeletePropagationBackground
 		deleteOpts := &client.DeleteOptions{PropagationPolicy: &propagation}
 		owned := []client.Object{
@@ -174,7 +176,7 @@ var _ = Describe("Task Controller", func() {
 			obj.SetNamespace(taskNamespace)
 			_ = k8sClient.Delete(ctx, obj, deleteOpts)
 		}
-		// The prompt and config ConfigMaps have different names — handle separately.
+		// The prompt and config ConfigMaps have different names, so delete them separately.
 		for _, name := range []string{policy.InlinePromptConfigMapName(taskName), policy.AgentConfigMapName(taskName)} {
 			cm := &corev1.ConfigMap{}
 			cm.SetName(name)
@@ -555,6 +557,107 @@ var _ = Describe("Task Controller", func() {
 		})
 	})
 
+	Context("Job TTL — the controller flag decides how long finished Jobs linger", func() {
+		It("stamps the configured TTL on the Job", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace))).To(Succeed())
+			r := reconciler()
+			r.JobTTLSeconds = 600
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			Expect(job.Spec.TTLSecondsAfterFinished).To(HaveValue(BeEquivalentTo(600)))
+		})
+	})
+
+	Context("Task GC — terminal Tasks are deleted after ttlSecondsAfterFinished", func() {
+		ttl := func(s int32) *int32 { return &s }
+
+		// finish creates the Task, reconciles it into a Job, fails the Job and
+		// reconciles once more so the Task reaches the terminal Failed phase.
+		finish := func(r *TaskReconciler, opts ...func(*conveyorv1alpha1.Task)) {
+			ExpectWithOffset(1, k8sClient.Create(ctx, newTask(taskName, taskNamespace, opts...))).To(Succeed())
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+
+			var job batchv1.Job
+			ExpectWithOffset(1, k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Failed = 1
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+				batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+			)
+			ExpectWithOffset(1, k8sClient.Status().Update(ctx, &job)).To(Succeed())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+
+			var got conveyorv1alpha1.Task
+			ExpectWithOffset(1, k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
+			ExpectWithOffset(1, got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseFailed))
+		}
+		withTTL := func(s int32) func(*conveyorv1alpha1.Task) {
+			return func(t *conveyorv1alpha1.Task) { t.Spec.TTLSecondsAfterFinished = ttl(s) }
+		}
+
+		It("deletes a terminal Task once its TTL has elapsed", func() {
+			r := reconciler()
+			finish(r, withTTL(0))
+
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeZero())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, taskKey, &conveyorv1alpha1.Task{}))
+			}, eventuallyTimeout, eventuallyPoll).Should(BeTrue(), "Task must be deleted")
+		})
+
+		It("keeps a terminal Task and requeues until the TTL elapses", func() {
+			r := reconciler()
+			finish(r, withTTL(3600))
+
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(And(BeNumerically(">", 50*time.Minute), BeNumerically("<=", time.Hour)))
+			Expect(k8sClient.Get(ctx, taskKey, &conveyorv1alpha1.Task{})).To(Succeed())
+		})
+
+		It("never deletes when neither the Task nor the controller sets a TTL", func() {
+			r := reconciler()
+			finish(r)
+
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeZero())
+			Expect(k8sClient.Get(ctx, taskKey, &conveyorv1alpha1.Task{})).To(Succeed())
+		})
+
+		It("applies the controller default when the Task sets no TTL", func() {
+			r := reconciler()
+			r.DefaultTaskTTLSeconds = ttl(0)
+			finish(r)
+
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, taskKey, &conveyorv1alpha1.Task{}))
+			}, eventuallyTimeout, eventuallyPoll).Should(BeTrue(), "controller default must delete the Task")
+		})
+
+		It("lets the Task's own TTL override the controller default", func() {
+			r := reconciler()
+			r.DefaultTaskTTLSeconds = ttl(0)
+			finish(r, withTTL(3600))
+
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeNumerically(">", 0))
+			Expect(k8sClient.Get(ctx, taskKey, &conveyorv1alpha1.Task{})).To(Succeed())
+		})
+	})
+
 	Context("prompt projection — inline prompts go through an owned ConfigMap", func() {
 		const (
 			promptAgentName = "prompt-reader"
@@ -729,8 +832,8 @@ var _ = Describe("Task Controller", func() {
 	})
 
 	Context("Job outcome — failure conditions drive the terminal phase", func() {
-		// failJob marks the live Job failed with the given condition reason,
-		// mirroring how the job controller reports it.
+		// failJob marks the live Job failed with the given condition reason.
+		// It mirrors how the Job controller reports it.
 		failJob := func(reason string) {
 			var job batchv1.Job
 			ExpectWithOffset(1, k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
@@ -1110,9 +1213,10 @@ var _ = Describe("Task Controller", func() {
 
 	Context("ClusterAgentClass events — mapping back to waiting Tasks", func() {
 		// The suite's direct envtest client cannot serve the custom
-		// .spec.agent.ref field selector — that index lives in the manager's
-		// cache and the suite never runs SetupWithManager. A fake client
-		// carrying the same index exercises tasksForAgentClass's filtering.
+		// .spec.agent.ref field selector. That index is in the manager's
+		// cache, and the suite never runs SetupWithManager. A fake client
+		// that carries the same index exercises the filtering in
+		// tasksForAgentClass.
 		It("enqueues only non-terminal Tasks that reference the class", func() {
 			completed := newTask("map-done", taskNamespace, withAgentRef("map-agent"))
 			completed.Status.Phase = conveyorv1alpha1.TaskPhaseCompleted
@@ -1122,7 +1226,7 @@ var _ = Describe("Task Controller", func() {
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(k8sClient.Scheme()).
 				WithIndex(&conveyorv1alpha1.Task{}, taskAgentRefIndex, func(obj client.Object) []string {
-					// Mirrors the index function registered in SetupWithManager.
+					// This mirrors the index function that SetupWithManager registers.
 					task := obj.(*conveyorv1alpha1.Task)
 					if task.Spec.Agent.Ref == "" {
 						return nil
@@ -1144,8 +1248,8 @@ var _ = Describe("Task Controller", func() {
 })
 
 // allowlistPorts returns "PROTO/port" for every port on the NetworkPolicy
-// egress rules that target IPBlocks, i.e. the allowlist rule (the DNS rule
-// targets a pod selector and is skipped).
+// egress rules that target IPBlocks, that is, the allowlist rule. It skips
+// the DNS rule, which targets a pod selector.
 func allowlistPorts(np *networkingv1.NetworkPolicy) []string {
 	var out []string
 	for _, rule := range np.Spec.Egress {

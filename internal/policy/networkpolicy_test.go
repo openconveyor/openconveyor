@@ -176,8 +176,8 @@ func (r deadlineCheckingResolver) LookupHost(ctx context.Context, _ string) ([]s
 
 func TestBuildNetworkPolicy_LookupIsBounded(t *testing.T) {
 	var sawDeadline bool
-	// Parent ctx is cancelled immediately so the blocking resolver returns
-	// right away — the assertion is about the per-lookup deadline existing.
+	// The test cancels the parent ctx immediately, so the blocking resolver
+	// returns at once. The assertion is about the per-lookup deadline.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -193,9 +193,9 @@ func TestBuildNetworkPolicy_LookupIsBounded(t *testing.T) {
 	}
 }
 
-// TestBuildNetworkPolicy_EgressPorts pins #24: the allowlist rule is
-// restricted to spec.permissions.egressPorts, 443 when unset, on both
-// TCP and UDP (HTTP/3 is UDP 443). The DNS rule keeps its own port 53.
+// TestBuildNetworkPolicy_EgressPorts pins #24: the allowlist rule opens
+// only spec.permissions.egressPorts, or 443 when unset, on both TCP and
+// UDP (HTTP/3 is UDP 443). The DNS rule keeps its own port 53.
 func TestBuildNetworkPolicy_EgressPorts(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -225,7 +225,7 @@ func TestBuildNetworkPolicy_EgressPorts(t *testing.T) {
 }
 
 // collectAllowlistPorts returns "PROTO/port" for every port on the
-// IPBlock (allowlist) rules, skipping the DNS rule.
+// IPBlock (allowlist) rules, and skips the DNS rule.
 func collectAllowlistPorts(np *networkingv1.NetworkPolicy) []string {
 	var out []string
 	for _, rule := range np.Spec.Egress {
@@ -254,7 +254,7 @@ func collectAllowlistPorts(np *networkingv1.NetworkPolicy) []string {
 }
 
 // TestHasHostnames pins the predicate the controller uses to decide
-// whether an egress allowlist needs periodic re-resolution (#25): only
+// whether an egress allowlist needs periodic re-resolution (#25). Only
 // DNS names drift; IPs and CIDRs are stable.
 func TestHasHostnames(t *testing.T) {
 	tests := []struct {
@@ -316,7 +316,7 @@ func hasDNSRule(np *networkingv1.NetworkPolicy) bool {
 func collectPeers(np *networkingv1.NetworkPolicy) []string {
 	var out []string
 	for _, rule := range np.Spec.Egress {
-		// Skip DNS rule — we assert that separately.
+		// Skip the DNS rule. The test asserts it separately.
 		isDNS := false
 		for _, p := range rule.Ports {
 			if p.Port != nil && p.Port.IntValue() == 53 && p.Protocol != nil &&

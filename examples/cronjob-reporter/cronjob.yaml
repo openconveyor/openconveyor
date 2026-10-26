@@ -1,6 +1,6 @@
 # Stock Kubernetes CronJob that creates a reporter Task on a schedule.
-# Per ADR-0003, triggers are out-of-process — this CronJob is just
-# `kubectl apply` running in a pod on a timer.
+# Per ADR-0003, triggers are out-of-process. This CronJob is `kubectl apply`
+# in a pod on a timer.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/name: conveyor
     app.kubernetes.io/component: cronjob-reporter
 spec:
-  # Monday at 09:00 UTC. Adjust to your timezone/preference.
+  # Monday at 09:00 UTC. Change it to your time zone and preference.
   schedule: "0 9 * * 1"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3

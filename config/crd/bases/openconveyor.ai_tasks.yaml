@@ -36,8 +36,9 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          Task is a single agent run: the orchestrator materializes a ServiceAccount,
-          Role, NetworkPolicy, and Job from this spec and tears them down when done.
+          Task is one requested run of an agent. The controller creates a
+          ServiceAccount, a Role, a NetworkPolicy and a Job from this spec. The
+          owner references remove them together with the Task.
         properties:
           apiVersion:
             description: |-
@@ -60,16 +61,17 @@ spec:
             description: spec defines the desired state of Task
             properties:
               agent:
-                description: agent selects the AgentClass that runs this Task.
+                description: agent selects the ClusterAgentClass that runs this Task.
                 properties:
                   config:
                     description: |-
                       config is non-secret, agent-specific configuration as a JSON object.
-                      Top-level scalar fields are projected into the agent container as
-                      environment variables named after the field (e.g. TARGET_REPO). The
-                      full JSON is additionally delivered at the AgentClass-declared
-                      inputs.config mount path and/or env var, when set. Never put secrets
-                      here — env vars leak into /proc; use permissions.secrets instead.
+                      The controller projects each top-level scalar field into the agent
+                      container as an environment variable with the name of the field, for
+                      example TARGET_REPO. When the ClusterAgentClass declares an inputs.config
+                      mount path, an environment variable, or both, the controller also
+                      delivers the full JSON there. Never put secrets here, because
+                      environment variables leak into /proc. Use permissions.secrets for secrets.
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
                   ref:
@@ -80,14 +82,15 @@ spec:
                 type: object
               permissions:
                 description: |-
-                  permissions declares the Task's least-privilege requirements.
-                  Default is zero egress, zero secrets, zero RBAC.
+                  permissions declares the least-privilege requirements of the Task.
+                  The default is zero egress, zero secrets and zero RBAC.
                 properties:
                   egress:
                     description: |-
-                      egress is the allowlist of DNS names, IP addresses or CIDR blocks the
-                      Task may reach. Default-deny otherwise. Resolved to NetworkPolicy egress
-                      rules at reconcile time.
+                      egress is the allowlist of DNS names, IP addresses or CIDR blocks that
+                      the Task can reach. Without entries, the controller denies all egress.
+                      The controller resolves the entries to NetworkPolicy egress rules at
+                      reconcile time.
                     items:
                       maxLength: 253
                       type: string
@@ -99,9 +102,9 @@ spec:
                   egressPorts:
                     description: |-
                       egressPorts restricts every egress allowlist entry to these
-                      destination ports (TCP and UDP). Unset means [443]. It does not
+                      destination ports (TCP and UDP). The default is [443]. It does not
                       apply to the DNS rule, which always uses port 53. Ports are a
-                      separate field rather than a ":port" suffix on egress entries
+                      separate field and not a ":port" suffix on the egress entries,
                       because IPv6 CIDRs contain colons.
                     items:
                       format: int32
@@ -113,12 +116,14 @@ spec:
                     x-kubernetes-list-type: set
                   rbac:
                     description: |-
-                      rbac is the list of Kubernetes RBAC rules the Task needs. Empty means
-                      the Task has no ServiceAccount token and cannot talk to the k8s API.
+                      rbac is the list of Kubernetes RBAC rules that the Task needs. When it
+                      is empty, the Task has no ServiceAccount token and cannot call the
+                      Kubernetes API.
                     items:
                       description: |-
-                        RBACRule is a minimal Kubernetes RBAC policy rule. Mirrors rbacv1.PolicyRule
-                        but kept local so the Task CRD schema does not transitively embed rbac/v1.
+                        RBACRule is a minimal Kubernetes RBAC policy rule. It mirrors
+                        rbacv1.PolicyRule. The type is local, so that the Task CRD schema does not
+                        embed rbac/v1 transitively.
                       properties:
                         apiGroups:
                           items:
@@ -147,20 +152,22 @@ spec:
                     type: array
                   secrets:
                     description: |-
-                      secrets is the list of Secret names (in the Task's namespace) projected
-                      as files at /run/secrets/<name>/<key>, one file per Secret key. Env-var
-                      injection is intentionally not supported — env vars leak into /proc.
+                      secrets is the list of Secret names (in the namespace of the Task) that
+                      the controller projects as files at /run/secrets/<name>/<key>, one file
+                      for each Secret key. The controller does not support injection through
+                      environment variables by design, because environment variables leak
+                      into /proc.
                     items:
                       type: string
                     type: array
                 type: object
               prompt:
-                description: prompt provides the prompt body. Exactly one source must
-                  be set.
+                description: prompt provides the prompt body. Set exactly one source.
                 properties:
                   configMapRef:
-                    description: configMapRef reads the prompt from a ConfigMap key
-                      in the Task's namespace.
+                    description: |-
+                      configMapRef names the ConfigMap key, in the namespace of the Task, from
+                      which the controller reads the prompt.
                     properties:
                       key:
                         description: The key to select.
@@ -184,14 +191,15 @@ spec:
                     x-kubernetes-map-type: atomic
                   inline:
                     description: |-
-                      inline is the prompt body as a string. Capped at 256 KiB so the owned
-                      ConfigMap it is projected through stays well under the 1 MiB limit;
-                      use secretRef or configMapRef for larger prompts.
+                      inline is the prompt body as a string. The limit is 256 KiB, so that the
+                      owned ConfigMap through which the controller projects it stays under the
+                      1 MiB limit. Use secretRef or configMapRef for a larger prompt.
                     maxLength: 262144
                     type: string
                   secretRef:
-                    description: secretRef reads the prompt from a Secret key in the
-                      Task's namespace.
+                    description: |-
+                      secretRef names the Secret key, in the namespace of the Task, from which
+                      the controller reads the prompt.
                     properties:
                       key:
                         description: The key of the secret to select from.  Must be
@@ -221,17 +229,20 @@ spec:
                   rule: '[has(self.inline) && self.inline.size() > 0, has(self.secretRef),
                     has(self.configMapRef)].filter(x, x).size() == 1'
               resources:
-                description: resources bounds CPU/memory/wall-clock.
+                description: resources bounds the CPU, the memory and the wall-clock
+                  time.
                 properties:
                   cpu:
-                    description: cpu request/limit, e.g. "500m" or "1".
+                    description: cpu is the CPU request and limit, for example "500m"
+                      or "1".
                     type: string
                     x-kubernetes-validations:
                     - message: must be a non-negative Kubernetes resource quantity,
                         e.g. '500m' or '1'
                       rule: isQuantity(self) && !quantity(self).isLessThan(quantity('0'))
                   memory:
-                    description: memory request/limit, e.g. "512Mi" or "1Gi".
+                    description: memory is the memory request and limit, for example
+                      "512Mi" or "1Gi".
                     type: string
                     x-kubernetes-validations:
                     - message: must be a non-negative Kubernetes resource quantity,
@@ -239,8 +250,8 @@ spec:
                       rule: isQuantity(self) && !quantity(self).isLessThan(quantity('0'))
                   timeout:
                     description: |-
-                      timeout is mandatory. The controller rejects Tasks without one.
-                      Mapped to Job.spec.activeDeadlineSeconds.
+                      timeout is mandatory. The controller rejects a Task without one.
+                      The controller maps it to Job.spec.activeDeadlineSeconds.
                     type: string
                     x-kubernetes-validations:
                     - message: must be a valid duration greater than 0 (e.g. '30m')
@@ -248,6 +259,18 @@ spec:
                 required:
                 - timeout
                 type: object
+              ttlSecondsAfterFinished:
+                description: |-
+                  ttlSecondsAfterFinished is the number of seconds after which the
+                  controller deletes a terminal Task (Completed, Failed or TimedOut).
+                  Through ownership, Kubernetes then deletes everything that the Task
+                  created. The semantics are the same as for the Job field of the same
+                  name. When it is unset, the controller uses its --task-ttl-seconds
+                  flag. When both are unset, the controller never deletes the Task
+                  automatically.
+                format: int32
+                minimum: 0
+                type: integer
             required:
             - agent
             - prompt
@@ -257,12 +280,15 @@ spec:
             description: status defines the observed state of Task
             properties:
               completionTime:
-                description: completionTime is when the Job finished (success or failure).
+                description: |-
+                  completionTime is the time at which the Job finished, with success or
+                  with failure.
                 format: date-time
                 type: string
               conditions:
-                description: conditions surface reconciler state per Kubernetes API
-                  conventions.
+                description: |-
+                  conditions report the reconciler state in the form that the Kubernetes
+                  API conventions define.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -322,13 +348,13 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               jobName:
-                description: jobName references the Job owned by this Task.
+                description: jobName is the name of the Job that this Task owns.
                 type: string
               observedGeneration:
                 description: |-
-                  observedGeneration is the most recent .metadata.generation the
-                  controller has reconciled against. Consumers use it to detect stale
-                  status after a spec change.
+                  observedGeneration is the most recent .metadata.generation that the
+                  controller has reconciled. Consumers use it to detect a stale status
+                  after a spec change.
                 format: int64
                 type: integer
               phase:
@@ -341,7 +367,7 @@ spec:
                 - TimedOut
                 type: string
               startTime:
-                description: startTime is when the Job first started.
+                description: startTime is the time at which the Job first started.
                 format: date-time
                 type: string
             type: object

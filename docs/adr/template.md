@@ -6,31 +6,32 @@
 
 ## Context
 
-Two or three sentences: what problem are we solving, and why does it
-need a deliberate decision rather than a default? Link to the issue,
+Write two or three sentences. State the problem, and state why it
+needs a deliberate decision instead of a default. Link to the issue,
 the relevant phase of the plan, or the code under discussion.
 
 ## Decision
 
-One paragraph, present tense: "We do X." Be specific. If there are
-obvious sub-decisions, enumerate them as sub-bullets.
+Write one paragraph in the present tense: "We do X." Be specific. If
+the decision has clear sub-decisions, list them as sub-bullets.
 
 ## Alternatives considered
 
-Each alternative in one or two sentences, and why we rejected it.
-This is the section that has the most future value — it tells a
-reader six months later why the "obvious" other approach is not the
-approach we took.
+Write each alternative in one or two sentences, and state why we
+rejected it. This section has the most future value. It tells a reader
+six months later why we did not take the "obvious" other approach.
 
 ## Consequences
 
-What this decision makes easy and what it makes harder. Include
-anything a new contributor might trip on. For example:
+State what this decision makes easy and what it makes harder. Include
+anything that can surprise a new contributor. For example:
 
-- We cannot do Y without revisiting this decision.
-- Tests in package Z now depend on the invariant set here.
-- Future work A is unblocked; future work B becomes more expensive.
+- We cannot do Y without a new decision.
+- The tests in package Z now depend on the invariant that this ADR
+  sets.
+- This decision unblocks future work A; future work B becomes more
+  expensive.
 
 ## References
 
-Code paths, PR numbers, related ADRs, external articles.
+List code paths, PR numbers, related ADRs, and external articles.

@@ -30,7 +30,7 @@ import (
 	"github.com/openconveyor/openconveyor/test/utils"
 )
 
-// managerImage is the manager image to be built and loaded for testing.
+// managerImage is the manager image that the suite builds and loads for testing.
 const managerImage = "example.com/conveyor:v0.0.1"
 
 // TestE2E runs the e2e test suite to validate the solution in an isolated environment.
@@ -48,8 +48,8 @@ var _ = BeforeSuite(func() {
 	_, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
 
-	// TODO(user): If you want to change the e2e test vendor from Kind,
-	// ensure the image is built and available, then remove the following block.
+	// TODO(user): If you change the e2e test vendor from Kind, build the image
+	// and make it available, then remove the following block.
 	By("loading the manager image on Kind")
 	err = utils.LoadImageToKindClusterWithName(managerImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")

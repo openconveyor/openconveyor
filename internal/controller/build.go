@@ -22,30 +22,33 @@ import (
 )
 
 const (
-	// nonRootUID is a conventional unprivileged UID used by many hardened
-	// base images (distroless, chainguard). Tasks run as this UID unless
-	// the AgentClass image refuses to start as non-root — in which case
-	// the AgentClass author is doing something we explicitly forbid.
+	// nonRootUID is a conventional unprivileged UID that many hardened
+	// base images use (distroless, chainguard). Tasks run as this UID,
+	// unless the AgentClass image refuses to start as non-root. In that
+	// case the AgentClass author does something that the project
+	// explicitly forbids.
 	nonRootUID int64 = 65532
 
-	// defaultTTLSeconds is how long a finished Job sticks around so its
-	// logs stay readable. An hour is enough for a human to notice + triage.
-	defaultTTLSeconds int32 = 3600
+	// DefaultJobTTLSeconds is the default for --job-ttl-seconds: how long a
+	// finished Job stays so its logs stay readable. One hour is enough for
+	// a human to notice and triage.
+	DefaultJobTTLSeconds int32 = 3600
 
-	// scratchVolumeName is an emptyDir mounted at /tmp so agents have a
-	// writable path despite readOnlyRootFilesystem.
+	// scratchVolumeName names the emptyDir that the Job mounts at /tmp.
+	// Agents then have a writable path despite readOnlyRootFilesystem.
 	scratchVolumeName = "scratch"
 
-	// agentContainerName is the single container in every Task Job. Part
-	// of the user-facing contract: `kubectl logs <job-pod> -c agent`.
+	// agentContainerName is the name of the single container in every Task
+	// Job. It is part of the user-facing contract:
+	// `kubectl logs <job-pod> -c agent`.
 	agentContainerName = "agent"
 )
 
 // buildServiceAccount returns the Task's dedicated ServiceAccount. Its
-// automount flag mirrors the pod's: false unless the Task declares RBAC.
-// The pod spec already withholds the token, but setting it on the SA as
-// well means any other pod that ever runs as this SA gets no token
-// either (defence in depth, #68).
+// automount flag mirrors the pod's flag: false unless the Task declares
+// RBAC. The pod spec already withholds the token. The flag on the
+// ServiceAccount also withholds the token from any other pod that ever
+// runs as this ServiceAccount (defense in depth, #68).
 func buildServiceAccount(task *conveyorv1alpha1.Task) *corev1.ServiceAccount {
 	return &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
@@ -57,27 +60,33 @@ func buildServiceAccount(task *conveyorv1alpha1.Task) *corev1.ServiceAccount {
 	}
 }
 
-// buildJob materializes the Task + AgentClass into a hardened one-shot Job.
+// buildJob creates a hardened one-shot Job from the Task and the AgentClass.
 //
-//   - non-root + RuntimeDefault seccomp on the pod (covers injected
-//     sidecars); read-only rootfs, no privilege escalation, all caps
-//     dropped on the container
-//   - SA token mounted only when the Task declared RBAC rules
-//   - Secrets (Task.permissions.secrets ∪ AgentClass.requires.secrets)
-//     projected at /run/secrets/<name>/<key>, one file per Secret key
-//   - Prompt mounted at the AgentClass-declared path (or absent if the
-//     AgentClass does not read a prompt)
-//   - egress is governed externally by the Task's NetworkPolicy
-//   - activeDeadlineSeconds mandatory — Task.spec.resources.timeout bounds cost
-//   - backoffLimit=0 — agent runs are expensive; no blind retries
+//   - The pod runs as non-root with the RuntimeDefault seccomp profile,
+//     which covers injected sidecars. The container has a read-only
+//     rootfs, no privilege escalation, and all capabilities dropped.
+//   - The Job mounts the ServiceAccount token only when the Task declares
+//     RBAC rules.
+//   - The Job projects the Secrets (Task.permissions.secrets ∪
+//     AgentClass.requires.secrets) at /run/secrets/<name>/<key>, one file
+//     for each Secret key.
+//   - The Job mounts the prompt at the path that the AgentClass declares,
+//     or not at all when the AgentClass does not read a prompt.
+//   - The Task's NetworkPolicy controls egress from outside the Job.
+//   - activeDeadlineSeconds is mandatory: Task.spec.resources.timeout
+//     bounds the cost.
+//   - backoffLimit=0: agent runs are expensive, so there are no blind
+//     retries.
+//   - ttlSecondsAfterFinished comes from the controller's --job-ttl-seconds.
 //
-// The caller is expected to have already unioned agent-required secrets
-// with task-declared secrets into `effectiveSecrets`, and to have
-// created any owned ConfigMap that an inline prompt references.
+// The caller must first union the agent-required secrets with the
+// task-declared secrets into `effectiveSecrets`. The caller must also
+// first create any owned ConfigMap that an inline prompt references.
 func buildJob(
 	task *conveyorv1alpha1.Task,
 	agent *conveyorv1alpha1.ClusterAgentClass,
 	effectiveSecrets []string,
+	ttlSeconds int32,
 ) (*batchv1.Job, error) {
 	secretVolumes, secretMounts := policy.BuildSecretVolumes(effectiveSecrets)
 	prompt, err := policy.BuildPromptProjection(task.Name, task.Spec.Prompt, agent.Spec.Inputs)
@@ -151,13 +160,14 @@ func buildJob(
 			RestartPolicy:                corev1.RestartPolicyNever,
 			ServiceAccountName:           taskResourceName(task),
 			AutomountServiceAccountToken: new(policy.NeedsServiceAccountToken(task.Spec.Permissions.RBAC)),
-			// Identity and seccomp are set on the pod as well as the
-			// container: pod-level values apply to containers injected
-			// later (service-mesh sidecars) and are where Pod Security
-			// Standards "restricted" looks first. The container block
-			// repeats them so a hand-edited pod template that drops the
-			// pod field still runs hardened, and adds the container-only
-			// fields (read-only rootfs, no privilege escalation, no caps).
+			// The Job sets identity and seccomp on the pod and on the
+			// container. Pod-level values apply to containers that a
+			// service mesh injects later, and Pod Security Standards
+			// "restricted" reads them first. The container block repeats
+			// them, so a hand-edited pod template that drops the pod field
+			// still runs hardened. The container block also adds the
+			// container-only fields (read-only rootfs, no privilege
+			// escalation, no capabilities).
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: new(true),
 				RunAsUser:    new(nonRootUID),
@@ -180,7 +190,7 @@ func buildJob(
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            new(int32(0)),
 			ActiveDeadlineSeconds:   new(int64(task.Spec.Resources.Timeout.Seconds())),
-			TTLSecondsAfterFinished: new(defaultTTLSeconds),
+			TTLSecondsAfterFinished: new(ttlSeconds),
 			Template:                pod,
 		},
 	}, nil
@@ -206,35 +216,37 @@ func buildResourceRequirements(r conveyorv1alpha1.TaskResources) (corev1.Resourc
 		}
 		list[corev1.ResourceMemory] = q
 	}
-	// Requests == Limits for predictable scheduling; no burst headroom.
+	// Requests == Limits gives predictable scheduling; there is no burst headroom.
 	reqs.Requests = list.DeepCopy()
 	reqs.Limits = list
 	return reqs, nil
 }
 
-// taskResourceName is the shared name for all resources materialized for a
-// Task (Job, ServiceAccount, NetworkPolicy, Role, RoleBinding). Task names
-// are already namespace-unique; reusing the name keeps things greppable.
+// taskResourceName is the shared name for all resources that the controller
+// creates for a Task (Job, ServiceAccount, NetworkPolicy, Role, RoleBinding).
+// Task names are already unique in a namespace; the shared name makes the
+// resources easy to grep.
 func taskResourceName(task *conveyorv1alpha1.Task) string {
 	return task.Name
 }
 
-// ownershipLabels go on every materialized resource and include the
-// pod-selector label. Keeping ownership labels a superset of the pod
-// selector means the same map works on the Job/SA/NP ObjectMeta and on
-// the pod template — no mismatch between what the NetworkPolicy selects
-// and what the pod advertises.
+// ownershipLabels returns the labels that go on every created resource,
+// including the pod-selector label. The ownership labels are a superset of
+// the pod selector, so the same map works on the Job, ServiceAccount and
+// NetworkPolicy ObjectMeta and on the pod template. The labels that the
+// NetworkPolicy selects and the labels that the pod advertises then do not
+// differ.
 func ownershipLabels(task *conveyorv1alpha1.Task) map[string]string {
 	labels := policy.OwnershipLabels(task.Name)
 	labels[policy.LabelComponent] = policy.ComponentTask
 	return labels
 }
 
-// podLabels are the labels on the pod template itself. Must include the
-// selector labels used by the Task's NetworkPolicy.
+// podLabels are the labels on the pod template itself. They must include
+// the selector labels that the Task's NetworkPolicy uses.
 func podLabels(task *conveyorv1alpha1.Task) map[string]string {
 	labels := ownershipLabels(task)
-	// PodSelectorLabels is already a subset of OwnershipLabels, but be
+	// PodSelectorLabels is already a subset of OwnershipLabels. The copy is
 	// explicit in case the policy package splits them in the future.
 	maps.Copy(labels, policy.PodSelectorLabels(task.Name))
 	return labels

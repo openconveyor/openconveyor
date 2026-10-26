@@ -7,11 +7,11 @@ labels: ["bug", "needs-triage"]
 
 ## What happened
 
-<!-- Describe the actual behaviour. Include Task YAML if relevant. -->
+<!-- Describe the actual behavior. Include the Task YAML if it is relevant. -->
 
 ## What you expected
 
-<!-- Describe the expected behaviour. -->
+<!-- Describe the expected behavior. -->
 
 ## Reproduction steps
 
@@ -30,11 +30,11 @@ labels: ["bug", "needs-triage"]
 ## Logs
 
 <!--
-Paste relevant controller logs:
+Paste the relevant controller logs:
 
   kubectl -n openconveyor-system logs deploy/openconveyor-controller-manager -c manager --tail=200
 
-And `kubectl describe task <name>` if the Task is affected.
+Add `kubectl describe task <name>` if the problem affects a Task.
 -->
 
 ```
@@ -43,4 +43,4 @@ And `kubectl describe task <name>` if the Task is affected.
 
 ## Anything else
 
-<!-- Stack traces, ADR references, workarounds you've already tried. -->
+<!-- Stack traces, ADR references, and workarounds that you already tried. -->

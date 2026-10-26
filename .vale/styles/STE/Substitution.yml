@@ -1,0 +1,46 @@
+extends: substitution
+message: "Use '%s' instead of '%s'."
+link: https://github.com/openconveyor/openconveyor/blob/main/docs/writing-style.md#word-list
+level: warning
+ignorecase: true
+# Keep in step with the word list in docs/writing-style.md.
+swap:
+  utilize: use
+  utilise: use
+  leverage: use
+  prior to: before
+  in order to: to
+  materialize: create
+  materializes: creates
+  materialized: created
+  mint: create
+  minted: created
+  spawn: create
+  spawns: creates
+  spawned: created
+  talk to: call
+  talks to: calls
+  lives in: is in
+  live in: is in
+  lands in: is created in
+  land in: is created in
+  pick up: read
+  picks up: reads
+  picked up: read
+  reach for: use
+  blow up: fail
+  blows up: fails
+  wedge: stop
+  wedges: stops
+  wedged: stopped
+  wide open: not restricted
+  load-bearing: required
+  knob: setting
+  knobs: settings
+  bolt on: add
+  bolted on: added
+  drop-in: direct
+  in-flight: in progress
+  on the fly: while it runs
+  sprinkled: present
+  'w/': with

@@ -21,15 +21,15 @@ import (
 )
 
 // defaultGenerateNamePrefix mirrors the CRD default for
-// spec.task.generateNamePrefix (clustertriggerclass_types.go) so Tasks
-// built from templates that predate the default still get a prefix.
+// spec.task.generateNamePrefix (clustertriggerclass_types.go), so Tasks
+// from templates that predate the default still have a prefix.
 const defaultGenerateNamePrefix = "task-"
 
-// ApplyFilters returns true when every filter matches the body. Filters
-// are ANDed; a zero-length slice matches everything. Matching compares
-// the gjson result's String() form to filter.Equals — adequate for the
-// "fire only on a specific action/state" use case without committing to
-// a full predicate language.
+// ApplyFilters returns true when every filter matches the body. The
+// function ANDs the filters; a zero-length slice matches everything. The
+// match compares the String() form of the gjson result to filter.Equals.
+// This is adequate for the "start only on a specific action or state" use
+// case, and it does not commit to a full predicate language.
 func ApplyFilters(body []byte, filters []conveyorv1alpha1.WebhookFilter) bool {
 	for _, f := range filters {
 		got := gjson.GetBytes(body, f.Path)
@@ -40,21 +40,26 @@ func ApplyFilters(body []byte, filters []conveyorv1alpha1.WebhookFilter) bool {
 	return true
 }
 
-// BuildTask materialises a Task from the template + webhook payload.
+// BuildTask creates a Task from the template and the webhook payload.
 //
-// The name is either set by a "name" field mapping (absolute override)
-// or left as generateName=<prefix> so the apiserver generates one.
-// Mappings that resolve to an empty string fall back to FieldMapping.Default;
-// mappings that don't resolve at all and have no default are dropped.
+// A "name" field mapping sets the name as an absolute override. Without
+// that mapping, the function sets generateName=<prefix>, so the apiserver
+// generates the name. A mapping that resolves to an empty string falls
+// back to FieldMapping.Default. The function drops a mapping that does not
+// resolve and has no default.
 func BuildTask(tmpl conveyorv1alpha1.TaskTemplate, body []byte) (*conveyorv1alpha1.Task, error) {
 	task := &conveyorv1alpha1.Task{
 		Spec: conveyorv1alpha1.TaskSpec{
 			// DeepCopy: Agent.Config is a pointer, and config mappings
-			// mutate it — the shared template must stay untouched.
+			// mutate it. The shared template must stay untouched.
 			Agent:       *tmpl.Agent.DeepCopy(),
 			Permissions: *tmpl.Permissions.DeepCopy(),
 			Resources:   tmpl.Resources,
 		},
+	}
+	if tmpl.TTLSecondsAfterFinished != nil {
+		ttl := *tmpl.TTLSecondsAfterFinished
+		task.Spec.TTLSecondsAfterFinished = &ttl
 	}
 
 	prefix := tmpl.GenerateNamePrefix
@@ -77,9 +82,9 @@ func BuildTask(tmpl conveyorv1alpha1.TaskTemplate, body []byte) (*conveyorv1alph
 		}
 	}
 
-	// A Task must have at least some prompt source by the time the
-	// reconciler sees it; surface that here instead of letting the CRD
-	// validation fire after the 200 response.
+	// A Task must have a prompt source before the reconciler sees it. The
+	// function reports that here, instead of letting the CRD validation
+	// reject the Task after the 200 response.
 	p := task.Spec.Prompt
 	if p.Inline == "" && p.SecretRef == nil && p.ConfigMapRef == nil {
 		return nil, errors.New(`webhook produced a Task with no prompt — add a "prompt" mapping or a default`)
@@ -99,7 +104,7 @@ func resolveMapping(body []byte, m conveyorv1alpha1.FieldMapping) string {
 	return got.String()
 }
 
-// applyMapping honours the documented `to` vocabulary:
+// applyMapping honors the documented `to` vocabulary:
 //
 //	prompt              → Task.spec.prompt.inline
 //	name                → metadata.name (clears generateName)
@@ -125,9 +130,9 @@ func applyMapping(task *conveyorv1alpha1.Task, to, value string) error {
 	return nil
 }
 
-// setConfigKey merges a single string value into spec.agent.config,
-// preserving any config already present on the template. Mapped values
-// override template values on key collision.
+// setConfigKey merges a single string value into spec.agent.config and
+// keeps any config that is already on the template. A mapped value
+// overrides a template value on a key collision.
 func setConfigKey(agent *conveyorv1alpha1.AgentRef, key, value string) error {
 	if key == "" {
 		return errors.New(`config mapping needs a key, e.g. "config.TARGET_REPO"`)

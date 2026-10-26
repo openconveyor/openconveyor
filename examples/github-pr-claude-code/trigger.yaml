@@ -1,14 +1,14 @@
 # GitHub Pull Requests → reviewer Task.
 #
-# Fires on pull_request.labeled events where the label is `conveyor:review`,
-# so a human still gates dispatch by labeling. The PR's html_url is mapped
-# into the prompt; the reviewer agent extracts it and calls `gh pr diff`
-# + `gh pr review --comment`.
+# The trigger starts a Task on pull_request.labeled events where the label is
+# `conveyor:review`, so a human still gates dispatch with a label. The mapping
+# copies the PR's html_url into the prompt. The reviewer agent extracts it and
+# calls `gh pr diff` + `gh pr review --comment`.
 #
-# Note: per-PR review instructions are not templatable today (mappings copy
-# a single payload field). If you need a custom rubric per PR, put it in
-# the PR body and switch the prompt mapping to pull_request.body — the
-# reviewer agent extracts the PR URL from the prompt regardless.
+# Note: you cannot template per-PR review instructions today (a mapping copies
+# a single payload field). If you need a custom rubric per PR, put it in the
+# PR body. Then switch the prompt mapping to pull_request.body. The reviewer
+# agent extracts the PR URL from the prompt in both cases.
 apiVersion: openconveyor.ai/v1alpha1
 kind: ClusterTriggerClass
 metadata:
@@ -38,15 +38,19 @@ spec:
       egress:
         - api.github.com
         - github.com
+    # The controller deletes the Task a day after it finishes, so
+    # webhook-driven Tasks do not accumulate (Task GC, same semantics as
+    # the Job field).
+    ttlSecondsAfterFinished: 86400
     resources:
       cpu: "1"
       memory: 1Gi
       timeout: 15m
     mappings:
-      # The PR URL is the load-bearing input — the agent's entrypoint extracts
-      # it from the prompt with a regex and feeds it to `gh pr diff` /
-      # `gh pr review`. Default keeps the Task valid if html_url is somehow
-      # missing; the agent will then exit with a clear error.
+      # The PR URL is the required input. The agent's entrypoint extracts it
+      # from the prompt with a regex and passes it to `gh pr diff` and
+      # `gh pr review`. The default keeps the Task valid if html_url is
+      # missing. The agent then exits with a clear error.
       - from: pull_request.html_url
         to: prompt
         default: "No pull_request.html_url in payload — cannot review"

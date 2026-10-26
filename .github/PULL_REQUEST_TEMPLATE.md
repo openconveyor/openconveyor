@@ -23,6 +23,7 @@
 Paste relevant output:
 
   make lint
+  make lint-docs
   make test
 
 If the change is user-facing, describe the manual smoke test

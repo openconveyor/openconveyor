@@ -26,7 +26,7 @@ func TestBuildPromptProjection(t *testing.T) {
 		inputs   conveyorv1alpha1.AgentInputs
 		wantErr  bool
 		wantZero bool
-		// Expected fields, checked only when wantZero and wantErr are false.
+		// The test checks the expected fields only when wantZero and wantErr are false.
 		wantConfigMap string // non-empty → ConfigMap volume source with this name
 		wantSecret    string // non-empty → Secret volume source with this name
 		wantMountPath string

@@ -26,14 +26,14 @@ import (
 )
 
 var (
-	// SchemeGroupVersion is group version used to register these objects.
-	// This name is used by applyconfiguration generators (e.g. controller-gen).
+	// SchemeGroupVersion is the group version that registers these objects.
+	// The applyconfiguration generators, for example controller-gen, use this name.
 	SchemeGroupVersion = schema.GroupVersion{Group: "openconveyor.ai", Version: "v1alpha1"}
 
 	// GroupVersion is an alias for SchemeGroupVersion, for backward compatibility.
 	GroupVersion = SchemeGroupVersion
 
-	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
+	// SchemeBuilder adds the Go types to the GroupVersionKind scheme.
 	SchemeBuilder = runtime.NewSchemeBuilder(func(scheme *runtime.Scheme) error {
 		metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 		return nil

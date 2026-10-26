@@ -22,8 +22,8 @@ import (
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 )
 
-// ConfigKey is the key used inside the owned ConfigMap (and thus the
-// projected file name via subPath) when the agent declares a config mount.
+// ConfigKey is the key inside the owned ConfigMap when the agent declares
+// a config mount. The subPath mount also uses it as the projected file name.
 const ConfigKey = "config.json"
 
 // ConfigVolumeName is the pod-level volume name that carries the config.
@@ -32,10 +32,10 @@ const ConfigVolumeName = "config"
 // envNameRe matches valid POSIX environment variable names.
 var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// ConfigProjection is how spec.agent.config reaches the container:
-// scalar fields as env vars, plus — when the AgentClass declares a
-// config mount — a volume/mount pair carrying the full JSON. Zero value
-// means the Task has no config.
+// ConfigProjection is how spec.agent.config reaches the container. The
+// scalar fields become env vars. When the AgentClass declares a config
+// mount, a volume and a mount carry the full JSON. The zero value means
+// the Task has no config.
 type ConfigProjection struct {
 	Env    []corev1.EnvVar
 	Volume *corev1.Volume
@@ -47,32 +47,35 @@ type ConfigProjection struct {
 const configSuffix = "-config"
 
 // AgentConfigMapName returns the name of the owned ConfigMap that holds
-// the Task's agent config JSON. Separate from the Task's main resource
-// name and from the prompt ConfigMap.
+// the agent config JSON of the Task. The name differs from the main
+// resource name of the Task and from the prompt ConfigMap name.
 func AgentConfigMapName(taskName string) string {
 	return taskName + configSuffix
 }
 
 // BuildConfigProjection turns Task.spec.agent.config into container env
-// vars and, when the AgentClass declares a config input, a volume/mount
-// carrying the full JSON.
+// vars. When the AgentClass declares a config input, it also returns a
+// volume and a mount that carry the full JSON.
 //
 // Delivery contract:
 //
-//   - Top-level scalar fields (string/number/bool) become env vars named
-//     after the field, sorted for determinism. This is what the reference
-//     agents consume ($TARGET_REPO, $REPORT_ISSUE_URL, ...).
-//   - inputs.config.mount, when set, projects the full JSON as a single
-//     file at that path (from the controller-owned ConfigMap).
-//   - inputs.config.env, when set, delivers the full JSON in that env var.
+//   - Top-level scalar fields (string, number, bool) become env vars with
+//     the field name. The function sorts them for determinism. The
+//     reference agents consume these ($TARGET_REPO, $REPORT_ISSUE_URL, ...).
+//   - When the AgentClass sets inputs.config.mount, the controller projects
+//     the full JSON as a single file at that path from the controller-owned
+//     ConfigMap.
+//   - When the AgentClass sets inputs.config.env, the controller delivers
+//     the full JSON in that env var.
 //
-// Fields that cannot be env vars (nested objects/arrays, names that are
-// not valid env identifiers, null) are only reachable through the full
-// JSON; if the AgentClass declares neither mount nor env, such a field is
-// a PermanentError — retrying cannot fix a spec problem.
+// Some fields cannot become env vars: nested objects, arrays, null values,
+// and names that are not valid env identifiers. The agent can reach these
+// fields only through the full JSON. If the AgentClass declares neither a
+// mount nor an env, such a field is a PermanentError, because a retry
+// cannot fix a spec problem.
 //
-// Config is for non-secret data only: env vars leak into /proc, so
-// secrets must go through permissions.secrets (ADR-0004).
+// Config is for non-secret data only. Env vars leak into /proc, so secrets
+// must go through permissions.secrets (ADR-0004).
 func BuildConfigProjection(
 	taskName string,
 	config *runtime.RawExtension,
@@ -97,7 +100,7 @@ func BuildConfigProjection(
 		val, ok := scalarString(fields[k])
 		if !ok || !envNameRe.MatchString(k) {
 			if hasMount || hasWholeEnv {
-				continue // reachable via the full JSON
+				continue // reachable through the full JSON
 			}
 			return ConfigProjection{}, &PermanentError{Err: fmt.Errorf(
 				"spec.agent.config.%s cannot be projected as an env var and the AgentClass declares no config mount/env", k)}
@@ -138,10 +141,10 @@ func BuildConfigProjection(
 	}, nil
 }
 
-// BuildAgentConfigMap materialises the owned ConfigMap that carries the
-// config JSON for agents with a declared config mount. Returns nil when
-// there is nothing to mount — the reconciler should then make sure no
-// such ConfigMap lingers from a prior state.
+// BuildAgentConfigMap creates the owned ConfigMap that carries the config
+// JSON for agents with a declared config mount. It returns nil when there
+// is nothing to mount. The reconciler must then make sure that no such
+// ConfigMap remains from a previous state.
 func BuildAgentConfigMap(
 	taskName, namespace string,
 	config *runtime.RawExtension,
@@ -158,8 +161,8 @@ func BuildAgentConfigMap(
 	}
 }
 
-// decodeConfigObject parses the raw config as a JSON object, preserving
-// number literals as written (no float64 round-trip).
+// decodeConfigObject parses the raw config as a JSON object. It keeps
+// number literals as written and does not round-trip them through float64.
 func decodeConfigObject(raw []byte) (map[string]any, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()

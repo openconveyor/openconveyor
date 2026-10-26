@@ -20,11 +20,12 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"time"
 
-	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
-	// to ensure that exec-entrypoint and run can make use of them.
+	// Import all Kubernetes client auth plugins (for example Azure, GCP and
+	// OIDC), so that exec-entrypoint and run can use them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	corev1 "k8s.io/api/core/v1"
@@ -51,8 +52,9 @@ var (
 )
 
 // defaultTriggerNamespace is the fallback namespace for signature
-// Secret lookups and emitted Tasks when neither the flag nor
-// POD_NAMESPACE is set. Matches the release manifests' namespace.
+// Secret lookups and emitted Tasks. It applies when neither the flag nor
+// POD_NAMESPACE has a value. It matches the namespace in the release
+// manifests.
 const defaultTriggerNamespace = "conveyor-system"
 
 func init() {
@@ -78,11 +80,13 @@ type flags struct {
 	triggerAddr          string
 	triggerNamespace     string
 	egressRefresh        time.Duration
+	jobTTLSeconds        int
+	taskTTLSeconds       int
 }
 
-// defaultEgressRefresh bounds how long a Task's NetworkPolicy can lag a
-// DNS change. Five minutes is well under typical CDN TTL churn and keeps
-// the per-Task reconcile rate negligible.
+// defaultEgressRefresh bounds how long a Task's NetworkPolicy can lag
+// behind a DNS change. Five minutes is shorter than the typical CDN TTL
+// churn, and it keeps the per-Task reconcile rate negligible.
 const defaultEgressRefresh = 5 * time.Minute
 
 func parseFlags() (flags, zap.Options) {
@@ -109,11 +113,18 @@ func parseFlags() (flags, zap.Options) {
 	flag.StringVar(&fl.triggerNamespace, "trigger-namespace", "",
 		"Namespace where HMAC Secrets referenced by ClusterTriggerClass live. "+
 			"Defaults to POD_NAMESPACE or \""+defaultTriggerNamespace+"\".")
+	flag.IntVar(&fl.jobTTLSeconds, "job-ttl-seconds", int(controller.DefaultJobTTLSeconds),
+		"Seconds a finished Task Job (and its logs) is kept before Kubernetes deletes it "+
+			"(Job.spec.ttlSecondsAfterFinished). 0 deletes immediately.")
+	flag.IntVar(&fl.taskTTLSeconds, "task-ttl-seconds", -1,
+		"Cluster-wide default for Task.spec.ttlSecondsAfterFinished: seconds after a Task reaches a "+
+			"terminal phase before it is deleted. A Task's own value wins. Negative (the default) means "+
+			"Tasks without their own TTL are never deleted automatically.")
 	flag.DurationVar(&fl.egressRefresh, "egress-refresh-interval", defaultEgressRefresh,
 		"How often a running Task whose egress allowlist contains hostnames is re-resolved "+
 			"and its NetworkPolicy updated. 0 disables re-resolution.")
 
-	// Production JSON logging by default; --zap-devel restores the
+	// The default is production JSON logging; --zap-devel restores the
 	// development encoder for local runs.
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
@@ -121,14 +132,14 @@ func parseFlags() (flags, zap.Options) {
 	return fl, opts
 }
 
-// buildTLSOpts returns the TLS options shared by the metrics and
-// webhook servers.
+// buildTLSOpts returns the TLS options that the metrics and webhook
+// servers share.
 func buildTLSOpts(fl flags) []func(*tls.Config) {
 	var tlsOpts []func(*tls.Config)
-	// if the enable-http2 flag is false (the default), http/2 should be disabled
-	// due to its vulnerabilities. More specifically, disabling http/2 will
-	// prevent from being vulnerable to the HTTP/2 Stream Cancellation and
-	// Rapid Reset CVEs. For more information see:
+	// When the enable-http2 flag is false (the default), the servers disable
+	// HTTP/2 because of its vulnerabilities. Without HTTP/2, the servers are
+	// not vulnerable to the HTTP/2 Stream Cancellation and Rapid Reset CVEs.
+	// For more information see:
 	// - https://github.com/advisories/GHSA-qppj-fm5r-hxr3
 	// - https://github.com/advisories/GHSA-4374-p667-p6c8
 	if !fl.enableHTTP2 {
@@ -140,8 +151,9 @@ func buildTLSOpts(fl flags) []func(*tls.Config) {
 	return tlsOpts
 }
 
-// buildWebhookServer wires the (currently webhook-less) server the
-// scaffold expects; `kubebuilder create webhook` registers into it.
+// buildWebhookServer builds the webhook server that the scaffold expects;
+// the server has no webhooks today. `kubebuilder create webhook` registers
+// webhooks into it.
 func buildWebhookServer(fl flags, tlsOpts []func(*tls.Config)) webhook.Server {
 	options := webhook.Options{
 		TLSOpts: tlsOpts,
@@ -159,7 +171,7 @@ func buildWebhookServer(fl flags, tlsOpts []func(*tls.Config)) webhook.Server {
 }
 
 // buildMetricsOptions configures the manager's metrics endpoint.
-// More info:
+// For more information see:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.3/pkg/metrics/server
 // - https://book.kubebuilder.io/reference/metrics.html
 func buildMetricsOptions(fl flags, tlsOpts []func(*tls.Config)) metricsserver.Options {
@@ -169,17 +181,19 @@ func buildMetricsOptions(fl flags, tlsOpts []func(*tls.Config)) metricsserver.Op
 		TLSOpts:       tlsOpts,
 	}
 	if fl.secureMetrics {
-		// FilterProvider is used to protect the metrics endpoint with authn/authz.
-		// These configurations ensure that only authorized users and service accounts
-		// can access the metrics endpoint. The RBAC are configured in 'config/rbac/kustomization.yaml'. More info:
+		// FilterProvider protects the metrics endpoint with authentication and
+		// authorization. Only authorized users and service accounts can then access
+		// the metrics endpoint. 'config/rbac/kustomization.yaml' configures the RBAC.
+		// For more information see:
 		// https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.3/pkg/metrics/filters#WithAuthenticationAndAuthorization
 		options.FilterProvider = filters.WithAuthenticationAndAuthorization
 	}
 
-	// If the certificate is not specified, controller-runtime generates
-	// self-signed certificates for the metrics server — fine for dev, not
-	// recommended for production. For cert-manager-issued certs, enable
-	// [METRICS-WITH-CERTS] in config/default/kustomization.yaml.
+	// When you do not specify a certificate, controller-runtime generates
+	// self-signed certificates for the metrics server. That is acceptable for
+	// development, but do not use it in production. For certificates that
+	// cert-manager issues, enable [METRICS-WITH-CERTS] in
+	// config/default/kustomization.yaml.
 	if len(fl.metricsCertPath) > 0 {
 		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
 			"metrics-cert-path", fl.metricsCertPath,
@@ -193,7 +207,7 @@ func buildMetricsOptions(fl flags, tlsOpts []func(*tls.Config)) metricsserver.Op
 }
 
 // setupTrigger registers the webhook trigger adapter when
-// --trigger-bind-address is set.
+// --trigger-bind-address has a value.
 func setupTrigger(mgr ctrl.Manager, fl flags) error {
 	if fl.triggerAddr == "" {
 		return nil
@@ -226,14 +240,25 @@ func main() {
 func run() error {
 	fl, zapOpts := parseFlags()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
+	if fl.jobTTLSeconds < 0 || fl.jobTTLSeconds > math.MaxInt32 {
+		return fmt.Errorf("--job-ttl-seconds must be between 0 and %d, got %d", math.MaxInt32, fl.jobTTLSeconds)
+	}
+	if fl.taskTTLSeconds > math.MaxInt32 {
+		return fmt.Errorf("--task-ttl-seconds must be at most %d, got %d", math.MaxInt32, fl.taskTTLSeconds)
+	}
+	var taskTTL *int32
+	if fl.taskTTLSeconds >= 0 {
+		v := int32(fl.taskTTLSeconds) //nolint:gosec // range-checked above
+		taskTTL = &v
+	}
 
 	tlsOpts := buildTLSOpts(fl)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
-		// The trigger adapter reads HMAC Secrets by name. Bypassing the
-		// cache for Secrets keeps the manager from watching every Secret
-		// in the cluster just to serve those low-volume lookups.
+		// The trigger adapter reads HMAC Secrets by name. Without the cache
+		// for Secrets, the manager does not watch every Secret in the cluster
+		// to serve those low-volume lookups.
 		Client: client.Options{
 			Cache: &client.CacheOptions{
 				DisableFor: []client.Object{&corev1.Secret{}},
@@ -244,16 +269,13 @@ func run() error {
 		HealthProbeBindAddress: fl.probeAddr,
 		LeaderElection:         fl.enableLeaderElection,
 		LeaderElectionID:       "17b16654.openconveyor.ai",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
+		// LeaderElectionReleaseOnCancel makes the leader step down voluntarily
+		// when the Manager ends, so the new leader does not wait for LeaseDuration.
+		// The option is safe only when the binary ends immediately after the
+		// Manager stops. This scaffold ends the program immediately after the
+		// Manager stops, so the option is safe to enable here. Do not enable it
+		// when the program does cleanup work after the Manager stops.
 		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
@@ -266,6 +288,8 @@ func run() error {
 		Client:                mgr.GetClient(),
 		Scheme:                mgr.GetScheme(),
 		EgressRefreshInterval: fl.egressRefresh,
+		JobTTLSeconds:         int32(fl.jobTTLSeconds), //nolint:gosec // range-checked above
+		DefaultTaskTTLSeconds: taskTTL,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		return fmt.Errorf("create Task controller: %w", err)
 	}
@@ -290,7 +314,8 @@ func run() error {
 }
 
 // resolveTriggerNamespace picks the namespace for signature Secret lookups.
-// Priority: explicit flag > POD_NAMESPACE (downward API) > defaultTriggerNamespace.
+// The priority is: the explicit flag, then POD_NAMESPACE (downward API), then
+// defaultTriggerNamespace.
 func resolveTriggerNamespace(flagValue string) string {
 	if flagValue != "" {
 		return flagValue

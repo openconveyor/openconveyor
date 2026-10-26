@@ -17,7 +17,19 @@ manager:
     tag: ""
     pullPolicy: IfNotPresent
 
-  ## Arguments
+  ## Seconds a finished Task Job (and its logs) is kept before Kubernetes
+  ## deletes it (--job-ttl-seconds). 0 deletes immediately.
+  ##
+  jobTTLSeconds: 3600
+
+  ## Cluster-wide default for Task.spec.ttlSecondsAfterFinished
+  ## (--task-ttl-seconds): seconds after a Task finishes before it is
+  ## deleted. A Task's own value wins. Leave empty to never delete Tasks
+  ## that set no TTL themselves.
+  ##
+  taskTTLSeconds: ""
+
+  ## Extra arguments
   ##
   args:
     - --leader-elect

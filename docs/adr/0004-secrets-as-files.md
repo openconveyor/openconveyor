@@ -6,33 +6,32 @@
 
 ## Context
 
-Kubernetes offers two mainstream ways to surface Secret data into a
-pod: `envFrom`/`env.valueFrom.secretKeyRef`, and volume projection.
-Most examples on the internet use env vars because they are two
-lines of YAML. For an orchestrator whose value proposition is
-"least-privilege agent runs," picking the right mechanism is a
-security decision.
+Kubernetes offers two mainstream ways to expose Secret data to a pod:
+`envFrom`/`env.valueFrom.secretKeyRef`, and volume projection. Most
+examples on the internet use env vars because they are two lines of
+YAML. The value proposition of OpenConveyor is "least-privilege agent
+runs," so the choice of mechanism is a security decision.
 
 ## Decision
 
-Secrets declared in `Task.spec.permissions.secrets` are always
-projected as read-only volumes at `/run/secrets/<name>/`. OpenConveyor
-never writes a Secret to an env var. If a user wants a secret in
-an env var they can source it inside the container at runtime —
-that is their choice to make, not ours.
+OpenConveyor always projects the secrets in
+`Task.spec.permissions.secrets` as read-only volumes at
+`/run/secrets/<name>/`. OpenConveyor never writes a Secret to an env
+var. A user who wants a secret in an env var can source it inside the
+container at runtime. That is their choice, not ours.
 
 ## Alternatives considered
 
-- **Env vars via `envFrom`.** Rejected. Env vars live in
-  `/proc/<pid>/environ` and are inherited by every child process the
-  agent spawns. A sub-process that crashes and dumps its environment
-  to stderr, or a diagnostic tool that prints `/proc/self/environ`,
-  leaks the secret. File-based secrets have POSIX permissions and
-  do not travel with `exec`.
-- **Both, configurable per-secret.** Rejected. "Configurable
-  security defaults" is another way to say "the insecure default
-  will get picked." The ceremony to go from file → env var is
-  small; the cost of a leaked token is large.
+- **Env vars with `envFrom`.** Rejected. Env vars are in
+  `/proc/<pid>/environ`, and every child process that the agent
+  creates inherits them. A sub-process that crashes and dumps its
+  environment to stderr, or a diagnostic tool that prints
+  `/proc/self/environ`, leaks the secret. File-based secrets have
+  POSIX permissions and do not travel with `exec`.
+- **Both, configurable per secret.** Rejected. "Configurable security
+  defaults" is another way to say "someone selects the insecure
+  default." The ceremony to go from a file to an env var is small; the
+  cost of a leaked token is large.
 - **Project everything into one directory** (`/etc/openconveyor/secrets/...`).
   Rejected in favor of `/run/secrets/<name>/`. `/run` is the
   conventional tmpfs mount point; `/etc/openconveyor` would imply
@@ -40,19 +39,19 @@ that is their choice to make, not ours.
 
 ## Consequences
 
-- **Agent images have to be written to read files.** Agents that
-  assume `ANTHROPIC_API_KEY=$(env)` will not work as-is. Reference
-  agent images (`claude-code-implementer`, etc.) read the file and
-  export the env var internally before invoking the underlying CLI.
-- **Listing `/run/secrets` is the inventory check.** An auditor or
-  a nervous operator can `kubectl exec -- ls /run/secrets` to see
-  exactly what this Task has access to. That matches the
-  declarative model: what is in the Task spec should match what is
-  on disk.
-- **Secret rotation is eventual.** Projected Secret volumes update
-  when the underlying Secret changes, but with kubelet-dependent
-  delay (tens of seconds). Agent runs are one-shot and short;
-  rotation during a run is not a concern in practice.
+- **Agent image authors have to write agents that read files.** An
+  agent that assumes `ANTHROPIC_API_KEY=$(env)` does not work as-is.
+  The reference agent images (for example `claude-code-implementer`)
+  read the file and export the env var internally before they invoke
+  the underlying CLI.
+- **Listing `/run/secrets` is the inventory check.** An auditor or a
+  nervous operator can run `kubectl exec -- ls /run/secrets` to see
+  exactly which secrets this Task can access. That matches the
+  declarative model: the Task spec and the disk must agree.
+- **Secret rotation is eventual.** The kubelet updates a projected
+  Secret volume when the underlying Secret changes, but with a
+  kubelet-dependent delay (tens of seconds). Agent runs are one-shot
+  and short; rotation during a run is not a concern in practice.
 
 ## References
 

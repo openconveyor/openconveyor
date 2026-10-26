@@ -1,7 +1,7 @@
 # Reference ClusterTriggerClass: GitHub Issues → implementer Task.
-# Fires only when an issue is labeled `conveyor:ready`, so a human still
-# gates dispatch. The "issue.title" path is used as the prompt; a real
-# deployment probably wants issue.body instead.
+# It starts a Task only when a user labels an issue `conveyor:ready`, so a
+# human still gates dispatch. The "issue.title" path is the prompt. For a
+# real deployment, use issue.body instead.
 apiVersion: openconveyor.ai/v1alpha1
 kind: ClusterTriggerClass
 metadata:
@@ -16,8 +16,8 @@ spec:
     algorithm: sha256
     prefix: "sha256="
     secretRef:
-      # The Secret must live in the adapter's namespace (flag
-      # --trigger-namespace, defaults to conveyor-system).
+      # The Secret must be in the adapter's namespace (flag
+      # --trigger-namespace, default conveyor-system).
       name: github-webhook
       key: secret
   filters:

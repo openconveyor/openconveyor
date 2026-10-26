@@ -1,7 +1,7 @@
 # Standalone Task template for the "my laptop is a trigger" flow.
-# Either apply this directly with `kubectl apply -f task-template.yaml`
-# after substituting $PROMPT, or use the matching `/conveyor` Claude
-# Code slash command in `commands/conveyor.md`.
+# Replace $PROMPT, then apply this file with `kubectl apply -f task-template.yaml`.
+# As an alternative, use the matching `/conveyor` Claude Code slash command in
+# `commands/conveyor.md`.
 apiVersion: openconveyor.ai/v1alpha1
 kind: Task
 metadata:
@@ -19,6 +19,10 @@ spec:
     egress:
       - api.github.com
       - github.com
+  # The controller deletes the Task a day after it finishes, so
+  # webhook-driven Tasks do not accumulate (Task GC, same semantics as
+  # the Job field).
+  ttlSecondsAfterFinished: 86400
   resources:
     cpu: "1"
     memory: 1Gi

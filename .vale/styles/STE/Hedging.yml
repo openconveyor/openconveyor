@@ -1,0 +1,15 @@
+extends: existence
+message: "Remove '%s'. State the fact without a hedge or an intensifier."
+link: https://github.com/openconveyor/openconveyor/blob/main/docs/writing-style.md#sentence-rules
+level: suggestion
+ignorecase: true
+tokens:
+  - simply
+  - just
+  - very
+  - obviously
+  - basically
+  - easily
+  - comfortably
+  - really
+  - quite

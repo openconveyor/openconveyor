@@ -18,6 +18,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Docs:** `docs/status-reference.md` lists every Task phase, the `Ready`
+  condition's closed reason set with status and message, the other status
+  fields, the Events that mirror them and how to consume them; linked from
+  `docs/architecture.md` and the README. (#31)
+- **CI/Supply chain:** release images carry an SBOM next to the existing
+  provenance attestation and are signed keyless with cosign against the
+  release workflow's OIDC identity; `docs/security-model.md` has the
+  `cosign verify` recipe. The release is gated on the lint, unit, e2e, chart
+  and agent-image workflows (reused via `workflow_call`) instead of
+  `make test` alone, and every GitHub Action is pinned to a commit SHA with
+  the version as a trailing comment. (#35)
+- **API/Controller:** Task garbage collection (#21). `spec.ttlSecondsAfterFinished`
+  on `Task` (and on the `ClusterTriggerClass` Task template) deletes a
+  terminal Task, with everything it owns, that many seconds after it reaches
+  Completed, Failed or TimedOut, same semantics as the Job field. The new
+  `--task-ttl-seconds` flag (Helm: `manager.taskTTLSeconds`) supplies a
+  cluster-wide default; a Task's own value wins. Unset at both levels keeps
+  today's behavior: Tasks are never deleted automatically. The example
+  trigger templates now set `86400`.
+- **Controller:** the finished-Job TTL (`Job.spec.ttlSecondsAfterFinished`)
+  is the new `--job-ttl-seconds` flag instead of a compile-time constant;
+  default unchanged at `3600`. The Helm chart exposes it as
+  `manager.jobTTLSeconds`. (#22)
 - **Controller:** hostnames in a Task's egress allowlist are re-resolved
   while the Task is not terminal and the NetworkPolicy is updated when the
   resolved IPs change, so CDN/anycast rotation no longer silently breaks
@@ -57,6 +80,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Docs:** all prose follows ASD-STE100 Simplified Technical English:
+  the README (rewritten), the guides, the ADRs (decisions unchanged), the
+  Go doc comments, and the comments in the agent images and sample YAML
+  (ADR-0007, `docs/writing-style.md`). Vale checks the mechanical rules
+  (`make lint-docs`, the `Docs Lint` workflow; warnings only). Mermaid
+  diagrams replace the ASCII art.
+- **Agents/CI:** the three reference agent images pin their base image to a
+  minor tag plus digest (`node:22.23.4-bookworm-slim@sha256:…`) and the
+  Claude Code CLI to an exact version through a `CLAUDE_CODE_VERSION` build
+  arg (`2.1.311`), the same in all three; `gh` stays on the GitHub CLI
+  stable apt channel. Dependabot's docker entry now watches `agents/*`, and
+  a new `Agent Images` workflow builds the three images on every PR and runs
+  `claude --version` inside each, without pushing. (#36)
 - **Security:** the Task's ServiceAccount now sets
   `automountServiceAccountToken` to the same value as the Job pod (`false`
   unless `spec.permissions.rbac` is declared), and the reconciler restores
@@ -75,6 +111,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (default `kindest/node:v1.36.4`, bumped with the k8s deps), so local and
   CI runs test the same Kubernetes version; CI moves to kind v0.33.0.
   (#37)
+
+### Fixed
+
+- **Docs:** small fixes from #31: the README example table lists all five
+  examples and the Go Report badge points at goreportcard.com instead of a
+  `pending` placeholder; `examples/README.md` no longer says "all three
+  examples" and names which AgentClass each example uses; the CronJob
+  reporter README creates `anthropic-api-key` with key `key` like the
+  other examples.
+- **Docs:** the README quick start now works end to end (#29). It creates
+  the `conveyor-tasks` namespace and the two Secrets the sample Task mounts
+  (ported from `examples/README.md`), the sample Task sets
+  `metadata.namespace: conveyor-tasks` so the README's claim is true, and the sample
+  Task's prompt is a repo-less smoke test that reaches `Completed` with
+  only an Anthropic key instead of a PR-opening prompt that could never
+  succeed without `TARGET_REPO`.
 
 ## [0.2.1] — 2026-10-25
 

@@ -18,9 +18,9 @@ import (
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 )
 
-// validateTask is defense-in-depth behind the CRD CEL rules: it still guards
-// objects that never passed current admission (pre-existing stored Tasks,
-// ratcheted updates), so it is tested directly here.
+// validateTask is defense in depth behind the CRD CEL rules. It still guards
+// objects that never passed the current admission rules (stored Tasks from
+// before the rules, ratcheted updates), so this test calls it directly.
 func TestValidateTask(t *testing.T) {
 	valid := func() *conveyorv1alpha1.Task {
 		return &conveyorv1alpha1.Task{

@@ -1,18 +1,26 @@
 # Reference agent image for the "reporter" archetype.
 #
 # Contract (see docs/plugin-authoring.md):
-#   * ENTRYPOINT reads /task/prompt, reads secrets from /run/secrets/<name>/,
-#     exits 0 on success and non-zero on failure.
-#   * Binary runs as UID 65532 under a read-only root filesystem. Writable
-#     state must land under /tmp (mounted as an emptyDir by conveyor).
+#   * The ENTRYPOINT reads /task/prompt and reads the secrets from
+#     /run/secrets/<name>/. It exits 0 on success and non-zero on failure.
+#   * The binary runs as UID 65532 under a read-only root filesystem. The
+#     entrypoint must write all state under /tmp. conveyor mounts /tmp as an
+#     emptyDir.
 #
 # The reporter never clones a repo and never pushes code. It reads data from
-# the GitHub API, summarizes it with Claude, and posts the result as a GitHub
-# Issue comment (or to stdout if no output URL is configured).
+# the GitHub API and summarizes it with Claude. It posts the result as a
+# GitHub Issue comment, or to stdout if the Task does not configure an output
+# URL.
 #
-# Tooling: Claude Code CLI + gh + curl.
+# Tooling: the Claude Code CLI, gh and curl.
 
-FROM node:22-bookworm-slim
+# The FROM line pins the base image to a minor tag plus a digest. Dependabot
+# (docker ecosystem, agents/*) updates both together.
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
+
+# The Claude Code CLI version is identical across the three reference agents.
+# A maintainer updates it by hand in chore(agents) PRs.
+ARG CLAUDE_CODE_VERSION=2.1.311
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -28,10 +36,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
 # conveyor enforces UID 65532 (see internal/controller/build.go:nonRootUID).
-# Pre-create the user so HOME resolution inside gh works even on a read-only
+# Create the user in the image so that gh can resolve HOME on a read-only
 # rootfs. All transient state goes to /tmp (the emptyDir mount).
 RUN groupadd --system --gid 65532 conveyor \
     && useradd --system --uid 65532 --gid 65532 --home-dir /tmp --shell /usr/sbin/nologin conveyor

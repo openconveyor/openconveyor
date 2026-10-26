@@ -1,8 +1,9 @@
 # GitHub Issues → implementer Task.
 #
-# Fires on issues.labeled events where the label is `conveyor:ready`, so
-# a human still gates dispatch by labeling. Uses issue.body as the prompt;
-# fall back to issue.title for terse tickets where the body is empty.
+# The trigger starts a Task on issues.labeled events where the label is
+# `conveyor:ready`, so a human still gates dispatch with a label. It uses
+# issue.body as the prompt. Use issue.title instead for terse tickets with
+# an empty body.
 apiVersion: openconveyor.ai/v1alpha1
 kind: ClusterTriggerClass
 metadata:
@@ -32,6 +33,10 @@ spec:
       egress:
         - api.github.com
         - github.com
+    # The controller deletes the Task a day after it finishes, so
+    # webhook-driven Tasks do not accumulate (Task GC, same semantics as
+    # the Job field).
+    ttlSecondsAfterFinished: 86400
     resources:
       cpu: "1"
       memory: 1Gi
@@ -40,9 +45,9 @@ spec:
       - from: issue.body
         to: prompt
         default: "See issue — no body supplied"
-      # config.* values are projected into the agent container as env vars.
-      # $TARGET_REPO / $TARGET_BRANCH are what make the implementer clone
-      # the repo and open a PR — without them the agent runs prompt-only.
+      # The controller projects config.* values into the agent container as
+      # env vars. $TARGET_REPO and $TARGET_BRANCH make the implementer clone
+      # the repo and open a PR. Without them the agent runs prompt-only.
       - from: repository.clone_url
         to: config.TARGET_REPO
       - from: repository.default_branch

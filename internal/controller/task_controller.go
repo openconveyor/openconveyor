@@ -34,12 +34,13 @@ import (
 )
 
 const (
-	// taskAgentRefIndex indexes Tasks by spec.agent.ref so the
-	// ClusterAgentClass watch can find the Tasks that reference it.
+	// taskAgentRefIndex indexes Tasks by spec.agent.ref. The
+	// ClusterAgentClass watch uses it to find the Tasks that reference a class.
 	taskAgentRefIndex = ".spec.agent.ref"
 
-	// agentClassMissingRequeue is a safety-net requeue for Tasks waiting
-	// on a ClusterAgentClass; the watch is the primary wake-up signal.
+	// agentClassMissingRequeue is the safety-net requeue interval for a Task
+	// that waits for its ClusterAgentClass. The watch is the primary wake-up
+	// signal.
 	agentClassMissingRequeue = 30 * time.Second
 )
 
@@ -48,14 +49,24 @@ type TaskReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Resolver policy.Resolver
-	// Recorder publishes Events on the Task so phase transitions and
-	// failures show up in `kubectl describe task`. Nil means no Events.
+	// Recorder publishes Events on the Task. Phase transitions and
+	// failures then show in `kubectl describe task`. Nil means no Events.
 	Recorder events.EventRecorder
-	// EgressRefreshInterval is how often a non-terminal Task whose egress
-	// allowlist contains hostnames is reconciled again so the resolved
-	// IPs in its NetworkPolicy follow DNS changes. Zero disables the
-	// periodic re-resolution (the snapshot taken at creation stands).
+	// EgressRefreshInterval is the interval at which the controller
+	// reconciles a non-terminal Task again when its egress allowlist
+	// contains hostnames. The resolved IPs in its NetworkPolicy then follow
+	// DNS changes. Zero disables the periodic re-resolution, and the
+	// snapshot from creation stays.
 	EgressRefreshInterval time.Duration
+	// JobTTLSeconds is the ttlSecondsAfterFinished that the controller sets
+	// on every Job: how long a finished Job (and its logs) stays before
+	// Kubernetes deletes it. The --job-ttl-seconds flag sets it, and
+	// DefaultJobTTLSeconds applies when the operator does not set the flag.
+	JobTTLSeconds int32
+	// DefaultTaskTTLSeconds is the cluster-wide fallback for
+	// spec.ttlSecondsAfterFinished (--task-ttl-seconds). When it is nil,
+	// the controller never deletes a Task that sets no TTL of its own.
+	DefaultTaskTTLSeconds *int32
 }
 
 var _ reconcile.Reconciler = (*TaskReconciler)(nil)
@@ -73,20 +84,23 @@ var _ reconcile.Reconciler = (*TaskReconciler)(nil)
 
 // Reconcile drives a Task through Pending → Running → Completed/Failed/TimedOut.
 //
-// Ordering is policy-before-Job on purpose: if the NetworkPolicy isn't in
-// place when the pod starts, the CNI default-allow window lets an agent
-// escape its egress allowlist for the first few hundred milliseconds.
+// The order is NetworkPolicy before Job on purpose. Without the
+// NetworkPolicy in place when the pod starts, the CNI default-allow window
+// lets an agent escape its egress allowlist. That window lasts the first
+// few hundred milliseconds.
 func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var task conveyorv1alpha1.Task
 	if err := r.Get(ctx, req.NamespacedName, &task); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Terminal Tasks are never reconciled again: once the Job finishes,
-	// its TTLSecondsAfterFinished deletion queues a reconcile that would
-	// otherwise recreate the Job and re-run a side-effectful agent.
+	// The controller never reconciles a terminal Task again. When the Job
+	// finishes, its TTLSecondsAfterFinished deletion queues a reconcile.
+	// Without this check, that reconcile recreates the Job and runs an
+	// agent with side effects again. The only work that remains for a
+	// terminal Task is garbage collection.
 	if isTerminal(task.Status.Phase) {
-		return ctrl.Result{}, nil
+		return r.collectTerminal(ctx, &task)
 	}
 
 	if err := validateTask(&task); err != nil {
@@ -97,9 +111,9 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	var agent conveyorv1alpha1.ClusterAgentClass
 	if err := r.Get(ctx, types.NamespacedName{Name: task.Spec.Agent.Ref}, &agent); err != nil {
 		if apierrors.IsNotFound(err) {
-			// Task-before-class ordering is the normal case with GitOps
-			// sync waves and webhook-created Tasks, so a missing class is
-			// a wait-state, not a terminal failure. The ClusterAgentClass
+			// A Task often exists before its class with GitOps sync waves
+			// and webhook-created Tasks. A missing class is therefore a
+			// wait state, not a terminal failure. The ClusterAgentClass
 			// watch re-enqueues this Task when the class appears; the
 			// requeue is a safety net.
 			metrics.ObserveReconcileError(metrics.StepAgentClassLookup)
@@ -115,10 +129,10 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	effectiveEgress := policy.MergeStringSets(task.Spec.Permissions.Egress, agent.Spec.Requires.Egress)
 	effectiveSecrets := policy.MergeStringSets(task.Spec.Permissions.Secrets, agent.Spec.Requires.Secrets)
 
-	// A step with a non-empty invalidReason may surface a PermanentError
-	// (bad CIDR, NXDOMAIN) that fails the Task; every other error is
-	// wrapped and returned so controller-runtime requeues with backoff
-	// instead of wedging the Task in Failed. Order matters: the
+	// A step with a non-empty invalidReason can return a PermanentError
+	// (bad CIDR, NXDOMAIN) that fails the Task. The loop wraps and returns
+	// every other error, so controller-runtime requeues with backoff and
+	// the Task does not stop in Failed. The order matters: the
 	// NetworkPolicy must exist before the Job (ADR-0005).
 	steps := []struct {
 		metricsStep   string
@@ -152,9 +166,9 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	job, err := r.ensureJob(ctx, &task, &agent, effectiveSecrets)
 	if err != nil {
 		metrics.ObserveReconcileError(metrics.StepJob)
-		// Config that can never be projected (malformed JSON, field with no
-		// delivery path) is a spec problem — fail the Task instead of
-		// requeueing forever.
+		// Config that the controller can never project (malformed JSON, a
+		// field with no delivery path) is a spec problem. Fail the Task
+		// instead of a requeue that never ends.
 		if policy.IsPermanent(err) {
 			return ctrl.Result{}, r.failTask(ctx, &task, reasonInvalidSpec, err)
 		}
@@ -166,22 +180,41 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	// Hostnames were resolved to a snapshot above; CDN and anycast
-	// records rotate, so come back on an interval while the Task is
-	// alive and let ensureNetworkPolicy patch in the current set.
+	// The steps above resolve the hostnames to a snapshot. CDN and anycast
+	// records rotate, so the controller requeues on an interval while the
+	// Task is alive. ensureNetworkPolicy then patches in the current set.
 	if r.EgressRefreshInterval > 0 && !isTerminal(task.Status.Phase) && policy.HasHostnames(effectiveEgress) {
 		return ctrl.Result{RequeueAfter: r.EgressRefreshInterval}, nil
 	}
 	return ctrl.Result{}, nil
 }
 
-// ensureOwned upserts one owned resource: set the controller reference,
-// create when absent, otherwise copy the reconcilable fields onto the
-// live object and update. Labels always sync; mutate (optional) copies
-// the type-specific mutable fields. The update is skipped when nothing
-// changed — every Job status flip triggers a full reconcile, and
-// unconditional writes would churn resourceVersions on all owned
-// resources each time.
+// collectTerminal deletes a terminal Task when its TTL has elapsed, or
+// requeues for the remaining time. The owned resources go with it through
+// their controller references. Without a TTL, the controller does not
+// touch the Task.
+func (r *TaskReconciler) collectTerminal(ctx context.Context, task *conveyorv1alpha1.Task) (ctrl.Result, error) {
+	deadline, ok := deletionDeadline(task, r.DefaultTaskTTLSeconds)
+	if !ok {
+		return ctrl.Result{}, nil
+	}
+	if remaining := time.Until(deadline); remaining > 0 {
+		return ctrl.Result{RequeueAfter: remaining}, nil
+	}
+	logf.FromContext(ctx).Info("Deleted terminal Task after its TTL", "phase", task.Status.Phase, "deadline", deadline)
+	if err := r.Delete(ctx, task, client.Preconditions{UID: &task.UID}); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	return ctrl.Result{}, nil
+}
+
+// ensureOwned upserts one owned resource. It sets the controller
+// reference, creates the resource when it is absent, and otherwise copies
+// the reconcilable fields onto the live object and updates it. Labels
+// always sync; the optional mutate function copies the type-specific
+// mutable fields. It skips the update when nothing changed. Every Job
+// status change triggers a full reconcile, and unconditional writes would
+// churn the resourceVersions on all owned resources each time.
 func ensureOwned[T client.Object](
 	ctx context.Context,
 	r *TaskReconciler,
@@ -218,8 +251,9 @@ func (r *TaskReconciler) ensureServiceAccount(ctx context.Context, task *conveyo
 		})
 }
 
-// ensureRole materializes (or tears down) the namespaced Role for this
-// Task. No RBAC declared → delete any stray Role. Otherwise upsert.
+// ensureRole creates or deletes the namespaced Role for this Task. When
+// the Task declares no RBAC, it deletes any stray Role. Otherwise it
+// upserts the Role.
 func (r *TaskReconciler) ensureRole(ctx context.Context, task *conveyorv1alpha1.Task) error {
 	desired := policy.BuildRole(task.Name, task.Namespace, task.Spec.Permissions.RBAC)
 	if desired == nil {
@@ -238,22 +272,24 @@ func (r *TaskReconciler) ensureRoleBinding(ctx context.Context, task *conveyorv1
 		return r.deleteIfExists(ctx, key, &rbacv1.RoleBinding{})
 	}
 	return ensureOwned(ctx, r, task, desired, &rbacv1.RoleBinding{}, func(existing, desired *rbacv1.RoleBinding) {
-		// RoleRef is immutable per K8s — if it drifted somehow, only Subjects
-		// and metadata can be patched. Leaving RoleRef untouched here.
+		// Kubernetes makes RoleRef immutable. If it drifted, the controller
+		// can patch only Subjects and metadata. This function does not touch
+		// RoleRef.
 		existing.Subjects = desired.Subjects
 	})
 }
 
 // ensureNetworkPolicy resolves the Task's egress allowlist to CIDRs and
-// upserts a NetworkPolicy that pairs a default-deny baseline with DNS +
-// allowlist exceptions, the latter restricted to spec.permissions.egressPorts
-// (443 when unset). When egress is empty the policy has zero egress
-// rules — the pod cannot reach anything, not even DNS.
+// upserts a NetworkPolicy. The policy pairs a default-deny baseline with a
+// DNS exception and an allowlist exception. spec.permissions.egressPorts
+// (443 when unset) limits the allowlist exception. When egress is empty,
+// the policy has zero egress rules: the pod cannot reach anything, not
+// even DNS.
 func (r *TaskReconciler) ensureNetworkPolicy(ctx context.Context, task *conveyorv1alpha1.Task, egress []string) error {
 	resolver := r.Resolver
 	if resolver == nil {
-		// SetupWithManager defaults this; the fallback covers reconcilers
-		// constructed directly (tests driving Reconcile by hand).
+		// SetupWithManager sets the default. The fallback covers a reconciler
+		// that a test constructs directly and drives through Reconcile by hand.
 		resolver = policy.DefaultResolver{}
 	}
 
@@ -273,7 +309,7 @@ func (r *TaskReconciler) ensureJob(
 	agent *conveyorv1alpha1.ClusterAgentClass,
 	effectiveSecrets []string,
 ) (*batchv1.Job, error) {
-	desired, err := buildJob(task, agent, effectiveSecrets)
+	desired, err := buildJob(task, agent, effectiveSecrets, r.JobTTLSeconds)
 	if err != nil {
 		return nil, err
 	}
@@ -292,16 +328,17 @@ func (r *TaskReconciler) ensureJob(
 	case getErr != nil:
 		return nil, getErr
 	}
-	// Jobs are mostly immutable — don't try to reconcile spec drift.
-	// If a Task's spec changes, the user deletes the Task and re-applies.
+	// Jobs are mostly immutable, so the controller does not reconcile spec
+	// drift. If a Task's spec changes, the user deletes the Task and applies
+	// it again.
 	return &existing, nil
 }
 
 // ensurePromptConfigMap owns the inline-prompt ConfigMap. When the Task's
-// prompt is inline, upsert the ConfigMap with the prompt body. When the
-// Task stops using an inline prompt (switched to secretRef/configMapRef),
-// delete any leftover owned ConfigMap so it does not linger with stale
-// content that drifts from the current spec.
+// prompt is inline, it upserts the ConfigMap with the prompt body. When
+// the Task changes from an inline prompt to secretRef or configMapRef, it
+// deletes any leftover owned ConfigMap. The ConfigMap then does not stay
+// with stale content that differs from the current spec.
 func (r *TaskReconciler) ensurePromptConfigMap(ctx context.Context, task *conveyorv1alpha1.Task) error {
 	key := types.NamespacedName{
 		Name:      policy.InlinePromptConfigMapName(task.Name),
@@ -318,9 +355,9 @@ func (r *TaskReconciler) ensurePromptConfigMap(ctx context.Context, task *convey
 }
 
 // ensureAgentConfigMap owns the ConfigMap that carries spec.agent.config
-// for agents that declare a config mount. Upserted when needed, deleted
-// when the Task has no config (or the agent no longer mounts it) so stale
-// content does not linger.
+// for an agent that declares a config mount. It upserts the ConfigMap when
+// needed. It deletes the ConfigMap when the Task has no config, or when
+// the agent no longer mounts it, so stale content does not stay.
 func (r *TaskReconciler) ensureAgentConfigMap(
 	ctx context.Context,
 	task *conveyorv1alpha1.Task,
@@ -350,8 +387,8 @@ func (r *TaskReconciler) deleteIfExists(ctx context.Context, key types.Namespace
 }
 
 // tasksForAgentClass maps a ClusterAgentClass event to the non-terminal
-// Tasks that reference it, so Tasks created before their class start
-// reconciling as soon as the class appears.
+// Tasks that reference it. A Task that exists before its class then
+// starts to reconcile as soon as the class appears.
 func (r *TaskReconciler) tasksForAgentClass(ctx context.Context, obj client.Object) []reconcile.Request {
 	var tasks conveyorv1alpha1.TaskList
 	if err := r.List(ctx, &tasks, client.MatchingFields{taskAgentRefIndex: obj.GetName()}); err != nil {
@@ -368,8 +405,8 @@ func (r *TaskReconciler) tasksForAgentClass(ctx context.Context, obj client.Obje
 	return reqs
 }
 
-// SetupWithManager wires the reconciler up to watch Tasks, owned Jobs,
-// and the ClusterAgentClasses that Tasks reference.
+// SetupWithManager sets up the reconciler to watch Tasks, every owned
+// resource, and the ClusterAgentClasses that Tasks reference.
 func (r *TaskReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	if r.Resolver == nil {
 		r.Resolver = policy.DefaultResolver{}
