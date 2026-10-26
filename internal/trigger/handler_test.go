@@ -52,7 +52,7 @@ func newHandler(c client.Client) *Handler {
 }
 
 // githubTriggerClass returns a realistic ClusterTriggerClass for a GitHub
-// issue-opened webhook. Used by several cases.
+// issue-opened webhook. Several cases use it.
 func githubTriggerClass() *conveyorv1alpha1.ClusterTriggerClass {
 	return &conveyorv1alpha1.ClusterTriggerClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "github-issues"},
@@ -90,7 +90,7 @@ func webhookSecret() *corev1.Secret {
 	}
 }
 
-// post builds a POST request with the body + the GitHub HMAC signature header.
+// post builds a POST request with the body and the GitHub HMAC signature header.
 func post(t *testing.T, path string, body []byte, sigValue string) *http.Request {
 	t.Helper()
 	r := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
@@ -213,7 +213,7 @@ func TestHandler_InvalidJSON(t *testing.T) {
 }
 
 func TestHandler_SecretMissing(t *testing.T) {
-	// CTC references a Secret the handler will not find.
+	// The CTC references a Secret that the handler cannot find.
 	ctc := githubTriggerClass()
 	c := newFakeClient(t, ctc) // no Secret
 	h := newHandler(c)
@@ -284,8 +284,8 @@ func TestHandler_IncompleteSecretRef(t *testing.T) {
 }
 
 func TestHandler_EmptySecretIs500(t *testing.T) {
-	// An empty signing secret is the operator's misconfiguration, not a
-	// caller auth failure — must be 500, not 401.
+	// An empty signing secret is a misconfiguration by the operator, not an
+	// auth failure by the caller. The response must be 500, not 401.
 	ctc := githubTriggerClass()
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "github-webhook", Namespace: adapterNamespace},
@@ -304,7 +304,7 @@ func TestHandler_EmptySecretIs500(t *testing.T) {
 
 func TestHandler_SecretKeyMissing(t *testing.T) {
 	ctc := githubTriggerClass()
-	// Secret exists but with a different key than expected.
+	// The Secret exists, but with a different key than expected.
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "github-webhook", Namespace: adapterNamespace},
 		Data:       map[string][]byte{"wrong-key": []byte("shh")},

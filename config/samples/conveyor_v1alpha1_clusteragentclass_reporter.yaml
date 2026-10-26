@@ -1,7 +1,7 @@
-# Reference ClusterAgentClass for the "reporter" archetype: reads data from
-# the GitHub API, summarizes it with Claude, and posts the result as a GitHub
-# Issue comment. Never clones a repo, never pushes code. The github-token
-# Secret should be scoped to Issue read + comment only.
+# Reference ClusterAgentClass for the "reporter" archetype. The agent reads
+# data from the GitHub API, summarizes it with Claude, and posts the result as
+# a GitHub Issue comment. It never clones a repo and never pushes code. Scope
+# the github-token Secret to Issue read + comment only.
 apiVersion: openconveyor.ai/v1alpha1
 kind: ClusterAgentClass
 metadata:
@@ -19,8 +19,8 @@ spec:
     prompt:
       mount: /task/prompt
   requires:
-    # Every reporter run needs the model API. The git host API (api.github.com)
-    # and github-token are per-Task so the operator controls which repos the
+    # Every reporter Task needs the model API. The git host API (api.github.com)
+    # and github-token are per-Task. The operator thus controls which repos the
     # reporter can read.
     egress:
       - api.anthropic.com

@@ -51,9 +51,9 @@ func TestEqualStatus(t *testing.T) {
 		{"status observedGeneration differs", func(s *conveyorv1alpha1.TaskStatus) {
 			s.ObservedGeneration = 2
 		}, false},
-		// Regression: the old hand-rolled compare ignored the condition's
-		// ObservedGeneration, so a generation-only bump never reached the
-		// API server and consumers saw a stale condition.
+		// Regression: the old hand-written compare ignored the condition's
+		// ObservedGeneration. A generation-only change then never reached
+		// the API server, and consumers saw a stale condition.
 		{"condition observedGeneration differs", func(s *conveyorv1alpha1.TaskStatus) {
 			s.Conditions[0].ObservedGeneration = 2
 		}, false},
@@ -239,9 +239,9 @@ func TestTimesEqual(t *testing.T) {
 	}
 }
 
-// TestSetStatusConditionRefreshesObservedGeneration pins the behavior the
-// old hand-rolled setCondition got wrong: an update that changes only
-// ObservedGeneration must still land on the stored condition.
+// TestSetStatusConditionRefreshesObservedGeneration pins the behavior that
+// the old hand-written setCondition got wrong: an update that changes only
+// ObservedGeneration must still reach the stored condition.
 func TestSetStatusConditionRefreshesObservedGeneration(t *testing.T) {
 	conds := []metav1.Condition{readyCondition(1)}
 	meta.SetStatusCondition(&conds, readyCondition(2))
@@ -254,9 +254,9 @@ func TestSetStatusConditionRefreshesObservedGeneration(t *testing.T) {
 	}
 }
 
-// TestDeletionDeadline pins the Task GC arithmetic (#21): spec TTL beats
-// the controller default, completionTime beats the Ready transition
-// time, and no TTL anywhere means never.
+// TestDeletionDeadline pins the Task GC arithmetic (#21). The spec TTL
+// wins over the controller default, and completionTime wins over the
+// Ready transition time. No TTL anywhere means no deletion.
 func TestDeletionDeadline(t *testing.T) {
 	finished := metav1.NewTime(time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC))
 	transition := metav1.NewTime(finished.Add(-time.Minute))

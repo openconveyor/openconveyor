@@ -1,15 +1,15 @@
-# Negative e2e scenario (#39): a Task with no egress whose agent tries
-# an outbound connection. The deny-all NetworkPolicy drops it (not even
-# DNS), wget exits non-zero and the Task must end Failed or TimedOut.
-# Applied and deleted by test/e2e/task_test.go.
+# The negative e2e scenario (#39): a Task with no egress whose agent tries
+# an outbound connection. The deny-all NetworkPolicy drops the connection,
+# and DNS as well. wget exits non-zero, and the Task must end Failed or
+# TimedOut. test/e2e/task_test.go applies and deletes it.
 #
 # The agent sleeps first because kind's CNI (kindnet with
-# kube-network-policies) only starts filtering a pod's traffic once it
-# has indexed the pod IP, about a second after the container starts. A
-# connection opened inside that window is accepted for its lifetime.
-# The controller cannot close that window (the NetworkPolicy already
-# exists before the Job does); the sleep keeps the spec from racing the
-# CNI. See docs/security-model.md.
+# kube-network-policies) only starts to filter a pod's traffic after it
+# has indexed the pod IP, about one second after the container starts. The
+# CNI accepts a connection that opens inside that window for its lifetime.
+# The controller cannot close that window, because the NetworkPolicy
+# already exists before the Job does. The sleep keeps the spec from a race
+# with the CNI. See docs/security-model.md.
 apiVersion: openconveyor.ai/v1alpha1
 kind: ClusterAgentClass
 metadata:

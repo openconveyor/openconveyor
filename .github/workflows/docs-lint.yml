@@ -1,0 +1,55 @@
+name: Docs Lint
+
+# Checks the prose (Markdown and Go comments) against the Simplified
+# Technical English rules in docs/writing-style.md. Warnings only: the
+# job annotates the pull request and does not fail it. Not a release
+# gate until the rules move to the error level.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  # Reusable, so release.yml can call it once it blocks.
+  workflow_call:
+
+# Keyed on this file's name, not github.workflow, so a caller's gates
+# do not share one group and cancel each other.
+concurrency:
+  group: docs-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  vale:
+    name: Vale (warn-only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The file list and the glob mirror VALE_PATHS and VALE_GLOB in the
+      # Makefile; keep them in step.
+      - name: Run Vale
+        uses: errata-ai/vale-action@518a9136acc6e6668ce7c00d367051e0941e87ff # v3.0.0
+        # Fork pull requests get a read-only token and reviewdog cannot
+        # post annotations; that must not fail the job.
+        continue-on-error: true
+        with:
+          version: 3.25.1
+          files: '["README.md","CLAUDE.md","AGENTS.md","GLOSSARY.md","CONTRIBUTING.md","MAINTAINERS.md","SECURITY.md","docs","examples","api","cmd","internal","test",".github"]'
+          vale_flags: "--glob=!{CHANGELOG.md,CODE_OF_CONDUCT.md,LICENSE,**/zz_generated*,dist/**,config/crd/**}"
+          reporter: github-pr-check
+          fail_on_error: false
+          filter_mode: nofilter
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Print the alert count
+        run: make lint-docs | tail -n 1

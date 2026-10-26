@@ -23,48 +23,53 @@ import (
 
 // AgentInputMount describes how a piece of Task input reaches the agent container.
 type AgentInputMount struct {
-	// mount is an absolute filesystem path inside the container. Mutually
-	// exclusive with env.
+	// mount is an absolute filesystem path inside the container. Do not set
+	// mount together with env.
 	// +optional
 	Mount string `json:"mount,omitempty"`
 
-	// env is the environment variable name. Mutually exclusive with mount.
-	// Prefer mount for secrets — env vars leak into /proc.
+	// env is the environment variable name. Do not set env together with
+	// mount. Use mount for secrets, because environment variables leak into
+	// /proc.
 	// +optional
 	Env string `json:"env,omitempty"`
 }
 
-// AgentInputs names the conventional inputs the agent image expects.
-// Each field is optional: an agent that does not consume a given input
-// simply leaves it unset on its AgentClass.
+// AgentInputs names the conventional inputs that the agent image expects.
+// Each field is optional. An agent that does not read an input leaves that
+// field unset on its ClusterAgentClass.
 type AgentInputs struct {
-	// prompt is where Task.spec.prompt is delivered.
+	// prompt is the location at which the controller delivers Task.spec.prompt.
 	// +optional
 	Prompt *AgentInputMount `json:"prompt,omitempty"`
 
-	// config is where Task.spec.agent.config is delivered (JSON).
+	// config is the location at which the controller delivers
+	// Task.spec.agent.config as JSON.
 	// +optional
 	Config *AgentInputMount `json:"config,omitempty"`
 }
 
-// AgentRequirements lists additional permissions this AgentClass always
-// needs, additive with whatever the Task itself declares.
+// AgentRequirements lists the additional permissions that this
+// ClusterAgentClass always needs. The controller adds them to the permissions
+// that the Task declares.
 type AgentRequirements struct {
-	// egress allowlist the agent always needs (e.g. the LLM endpoint). Entries
-	// are DNS names, IP addresses or CIDR blocks, as in Task.spec.permissions.egress.
+	// egress is the allowlist that the agent always needs, for example the LLM
+	// endpoint. Entries are DNS names, IP addresses or CIDR blocks, as in
+	// Task.spec.permissions.egress.
 	// +optional
 	// +kubebuilder:validation:MaxItems=256
 	// +kubebuilder:validation:items:MaxLength=253
 	// +kubebuilder:validation:items:XValidation:rule="isCIDR(self) || isIP(self) || self.matches('^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?([.][A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*[.]?$')",message="must be a DNS name, an IP address or a CIDR block"
 	Egress []string `json:"egress,omitempty"`
 
-	// secrets the agent always needs mounted.
+	// secrets is the list of Secret names that the controller always mounts for
+	// the agent.
 	// +optional
 	Secrets []string `json:"secrets,omitempty"`
 }
 
-// ClusterAgentClassSpec describes an agent plugin: its image and the
-// contract by which Task inputs reach the container.
+// ClusterAgentClassSpec describes an agent: its image and the contract
+// that defines how Task inputs reach the container.
 type ClusterAgentClassSpec struct {
 	// image is the OCI reference for the agent.
 	// +required
@@ -89,14 +94,14 @@ type ClusterAgentClassSpec struct {
 	// +optional
 	Inputs AgentInputs `json:"inputs,omitempty"`
 
-	// requires declares permissions this agent always needs. Additive with
-	// Task.spec.permissions at reconcile time.
+	// requires declares the permissions that this agent always needs. The
+	// controller adds them to Task.spec.permissions at reconcile time.
 	// +optional
 	Requires AgentRequirements `json:"requires,omitempty"`
 }
 
-// ClusterAgentClassStatus is intentionally minimal — this is a config
-// resource, not a reconciled one.
+// ClusterAgentClassStatus is minimal by design. The controller reads a
+// ClusterAgentClass as configuration and does not reconcile it.
 type ClusterAgentClassStatus struct {
 	// +optional
 	// +listType=map

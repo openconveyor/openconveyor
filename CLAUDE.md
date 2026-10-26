@@ -1,34 +1,36 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file gives guidance to Claude Code (claude.ai/code) when it works with code in this repository.
 
 ## Read these first
 
-- [`AGENTS.md`](AGENTS.md) — Kubebuilder scaffolding conventions, the
-  list of auto-generated files that must never be hand-edited, and the
+- [`AGENTS.md`](AGENTS.md) — the Kubebuilder scaffolding conventions, the
+  list of auto-generated files that you must never hand-edit, and the
   CLI commands (`kubebuilder create api`, `kubebuilder create webhook`)
-  used to add new types. **Do not duplicate or work around it.**
-- [`docs/architecture.md`](docs/architecture.md) — reconciliation flow
+  that add new types. **Do not duplicate it or work around it.**
+- [`docs/architecture.md`](docs/architecture.md) — the reconciliation flow
   and the code map (which package owns what).
 - [`docs/security-model.md`](docs/security-model.md) — the four
-  guarantees the controller is required to preserve.
-- [`docs/adr/`](docs/adr/) — load-bearing decisions (one CRD, secrets
+  guarantees that the controller must preserve.
+- [`docs/adr/`](docs/adr/) — the required decisions (one CRD, secrets
   as files, default-deny egress, webhook trust boundary). If a change
-  argues against an accepted ADR, supersede it; do not silently diverge.
+  argues against an accepted ADR, supersede the ADR. Do not diverge
+  from it in silence.
 
 ## What this project is
 
 OpenConveyor is a Kubernetes operator that runs AI coding agents as
-one-shot, hardened Jobs. A single CRD (`Task`) is reconciled into a
-fixed set of owned resources: ServiceAccount, NetworkPolicy, optional
-Role + RoleBinding, projected Secret volumes, and a Job. Triggers
-(GitHub, Linear, slash commands, …) and agent images live outside
-the controller and only touch it via the Kubernetes API.
+one-shot, hardened Jobs. The controller reconciles a single CRD (`Task`)
+into a fixed set of owned resources. These are a ServiceAccount, a
+NetworkPolicy, an optional Role + RoleBinding, projected Secret volumes,
+and a Job. Triggers (GitHub, Linear, slash commands, …) and agent images
+are outside the controller and call it only through the Kubernetes API.
 
-The repo is a kubebuilder v4 project, single-group layout, domain
-`openconveyor.ai`, module `github.com/openconveyor/openconveyor`,
-projectName `conveyor`. Three resources today: `Task` (namespaced),
-`ClusterAgentClass`, `ClusterTriggerClass` (both cluster-scoped).
+The repo is a kubebuilder v4 project with the single-group layout, the
+domain `openconveyor.ai`, the module `github.com/openconveyor/openconveyor`,
+and the projectName `conveyor`. It has three resources today: `Task`
+(namespaced), `ClusterAgentClass`, and `ClusterTriggerClass` (both
+cluster-scoped).
 
 ## Common commands
 
@@ -52,58 +54,63 @@ KUBEBUILDER_ASSETS="$(./bin/setup-envtest use $ENVTEST_K8S_VERSION --bin-dir ./b
   go test ./internal/policy/...
 ```
 
-Tests use **Ginkgo + Gomega**; envtest provides a real apiserver +
-etcd. Tooling (controller-gen, kustomize, setup-envtest, golangci-lint)
-is downloaded into `./bin/` by the Makefile — do not install
+Tests use **Ginkgo + Gomega**. envtest provides a real apiserver +
+etcd. The Makefile downloads the tooling (controller-gen, kustomize,
+setup-envtest, golangci-lint) into `./bin/`. Do not install these tools
 system-wide.
 
 ## Architecture rules that aren't obvious from the file tree
 
-- **`internal/policy/` is pure.** No cluster I/O except DNS via the
-  injectable `Resolver` interface. Keep new policy generators table-
-  testable; don't reach for a `client.Client` here.
+- **`internal/policy/` is pure.** It does no cluster I/O except DNS
+  through the injectable `Resolver` interface. Keep new policy
+  generators table-testable. Do not use a `client.Client` here.
 - **`internal/controller/` owns I/O.** `task_controller.go` is the
-  reconciler; `build.go` assembles the Job/SA. Resource builders
-  always go through `controllerutil.SetControllerReference` before
-  create — never write out-of-band, never skip ownership.
-- **NetworkPolicy is created before the Job.** Some CNIs have a
-  default-allow window before a policy is picked up; reordering
-  these breaks the security model. Don't change the ensure order
-  in the reconciler.
+  reconciler, and `build.go` assembles the Job and the SA. Resource
+  builders always call `controllerutil.SetControllerReference` before
+  they create a resource. Never write out-of-band, and never skip
+  ownership.
+- **The controller creates the NetworkPolicy before the Job.** Some
+  CNIs have a default-allow window before they apply a policy. A
+  different order breaks the security model. Do not change the ensure
+  order in the reconciler.
 - **`automountServiceAccountToken=false`** unless `permissions.rbac`
-  is non-empty. Egress empty → default-deny NetworkPolicy. Secrets
-  are projected as files at `/run/secrets/<name>/<key>`, never env vars
-  (ADR-0004). These defaults are guarantees, not knobs.
+  is non-empty. Empty egress → a default-deny NetworkPolicy. The
+  controller projects secrets as files at `/run/secrets/<name>/<key>`,
+  never as env vars (ADR-0004). These defaults are guarantees, not
+  settings.
 - **`spec.resources.timeout` is mandatory** and maps to
-  `Job.spec.activeDeadlineSeconds`; `backoffLimit: 0`. No retries
-  on expensive agent runs.
-- **Trigger adapter is a `manager.Runnable`** in the same binary,
-  enabled by `--trigger-bind-address`. The webhook trust boundary
-  lives at `internal/trigger/signature.go` (HMAC) — see ADR-0006
-  before touching it.
-- **Shared label schema** is in `internal/policy/labels.go`. New
-  owned resources should use it so `kubectl get … -l
-  openconveyor.ai/task=<name>` keeps working.
+  `Job.spec.activeDeadlineSeconds`. The Job has `backoffLimit: 0`.
+  There are no retries on expensive agent runs.
+- **The trigger adapter is a `manager.Runnable`** in the same binary.
+  The flag `--trigger-bind-address` enables it. The webhook trust
+  boundary is in `internal/trigger/signature.go` (HMAC). Read ADR-0006
+  before you change it.
+- **The shared label schema** is in `internal/policy/labels.go`. Use it
+  for new owned resources so that `kubectl get … -l
+  openconveyor.ai/task=<name>` continues to work.
 
 ## Conventions
 
-- Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`,
+- Use Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`,
   `refactor:`, `test:`). Target `main`. One PR, one reason.
 - Logging follows the K8s style guide (capital first letter, no
   trailing period, past tense, balanced key/value pairs). The
-  `logcheck` linter enforces this — do not disable it.
-- After editing `*_types.go` or kubebuilder markers, run
+  `logcheck` linter enforces this rule. Do not disable it.
+- After you edit `*_types.go` or kubebuilder markers, run
   `make manifests generate` and commit the diff. Do not hand-edit
   `zz_generated.*`, `config/crd/bases/*`, `config/rbac/role.yaml`,
   or `PROJECT`.
 - If a change alters a security default, update
   `docs/security-model.md` in the same PR.
+- Prose (Markdown, Go comments, sample and agent-image comments)
+  follows Simplified Technical English. See `docs/writing-style.md`.
+  `make lint-docs` checks it (warnings only).
 
 ## Agent skills
 
 ### Issue tracker
 
-Issues live in GitHub Issues for `openconveyor/openconveyor` (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+Issues are in GitHub Issues for `openconveyor/openconveyor` (through the `gh` CLI). See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

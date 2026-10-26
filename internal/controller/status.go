@@ -79,8 +79,8 @@ func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.
 // Task.
 const eventActionReconcile = "Reconcile"
 
-// recordEvent publishes an Event on the Task when a Recorder is wired.
-// Messages follow the logging style guide: capital first letter, no
+// recordEvent publishes an Event on the Task when a Recorder is present.
+// Messages follow the logging style guide: a capital first letter and no
 // trailing period.
 func (r *TaskReconciler) recordEvent(task *conveyorv1alpha1.Task, eventType, reason, msg string) {
 	if r.Recorder == nil {
@@ -89,8 +89,8 @@ func (r *TaskReconciler) recordEvent(task *conveyorv1alpha1.Task, eventType, rea
 	r.Recorder.Eventf(task, nil, eventType, reason, eventActionReconcile, "%s", msg)
 }
 
-// eventTypeFor maps a phase to the Event type: unhappy terminal phases
-// are Warnings, everything else is Normal.
+// eventTypeFor maps a phase to the Event type: the failed terminal phases
+// (Failed, TimedOut) are Warning, every other phase is Normal.
 func eventTypeFor(phase conveyorv1alpha1.TaskPhase) string {
 	switch phase {
 	case conveyorv1alpha1.TaskPhaseFailed, conveyorv1alpha1.TaskPhaseTimedOut:
@@ -110,10 +110,10 @@ func isTerminal(phase conveyorv1alpha1.TaskPhase) bool {
 	return false
 }
 
-// derivePhase maps the Job's state to a Task phase, condition reason
-// and message. The Job controller leaves the condition message empty
-// for the common cases, so each branch falls back to a fixed sentence:
-// the same text ends up in the Ready condition and in the Event.
+// derivePhase maps the Job's state to a Task phase, a condition reason
+// and a message. The Job controller leaves the condition message empty
+// for the common cases, so each branch falls back to a fixed sentence.
+// The same text goes into the Ready condition and into the Event.
 func derivePhase(job *batchv1.Job) (conveyorv1alpha1.TaskPhase, string, string) {
 	for _, c := range job.Status.Conditions {
 		if c.Status != corev1.ConditionTrue {
@@ -128,8 +128,9 @@ func derivePhase(job *batchv1.Job) (conveyorv1alpha1.TaskPhase, string, string) 
 			}
 			return conveyorv1alpha1.TaskPhaseFailed, reasonFailed, messageOr(c.Message, "Job failed")
 		case batchv1.JobSuspended:
-			// A suspended Job would otherwise read as Running (StartTime is
-			// set) — report Pending so consumers don't think work is active.
+			// A suspended Job has a StartTime and would otherwise read as
+			// Running. Report Pending, so consumers do not think that work is
+			// active.
 			return conveyorv1alpha1.TaskPhasePending, reasonSuspended, messageOr(c.Message, "Job is suspended")
 		}
 	}
@@ -158,9 +159,9 @@ func conditionStatusFor(phase conveyorv1alpha1.TaskPhase) metav1.ConditionStatus
 	}
 }
 
-// failTask marks the Task Failed because of cause (a spec problem
-// retrying cannot fix). When the status write itself fails, both errors
-// are joined so the original cause is never masked.
+// failTask marks the Task Failed because of cause, a spec problem that a
+// retry cannot fix. When the status write itself fails, it joins both
+// errors, so the result keeps the original cause.
 func (r *TaskReconciler) failTask(ctx context.Context, task *conveyorv1alpha1.Task, reason string, cause error) error {
 	if err := r.markInvalid(ctx, task, reason, cause.Error()); err != nil {
 		return errors.Join(cause, err)
@@ -187,8 +188,8 @@ func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1
 }
 
 // invalidEventMessage prefixes an error string with a sentence that
-// names what went wrong, so the Event reads well even though error
-// text starts lowercase.
+// names what went wrong. The Event then reads well although the error
+// text starts in lowercase.
 func invalidEventMessage(reason, msg string) string {
 	lead := "Task spec is invalid"
 	if reason == reasonEgressResolveFail {
@@ -197,11 +198,11 @@ func invalidEventMessage(reason, msg string) string {
 	return lead + ": " + msg
 }
 
-// markWaitingForAgentClass records that the Task is waiting for its
-// ClusterAgentClass to be created. Unlike markInvalid this keeps the
-// Task in Pending so it picks up where it left off once the class
-// exists. The status update is skipped when nothing changed so the
-// periodic requeue doesn't spam the API server.
+// markWaitingForAgentClass records that the Task waits for someone to
+// create its ClusterAgentClass. Unlike markInvalid, it keeps the Task in
+// Pending, so the Task continues where it stopped when the class exists.
+// It skips the status update when nothing changed, so the periodic
+// requeue does not flood the API server.
 func (r *TaskReconciler) markWaitingForAgentClass(ctx context.Context, task *conveyorv1alpha1.Task) error {
 	before := task.Status.DeepCopy()
 	msg := fmt.Sprintf("Waiting for ClusterAgentClass %q to be created", task.Spec.Agent.Ref)
@@ -217,18 +218,19 @@ func (r *TaskReconciler) markWaitingForAgentClass(ctx context.Context, task *con
 	if equalStatus(before, &task.Status) {
 		return nil
 	}
-	// A Task that cannot start until someone creates the class is
-	// actionable, hence Warning rather than Normal.
+	// A Task that cannot start until someone creates the class needs
+	// action, so the Event type is Warning rather than Normal.
 	r.recordEvent(task, corev1.EventTypeWarning, reasonAgentClassMissing, msg)
 	return r.Status().Update(ctx, task)
 }
 
-// deletionDeadline returns when a terminal Task becomes eligible for
-// garbage collection: its finish time plus spec.ttlSecondsAfterFinished,
-// or plus defaultTTL when the spec leaves it unset. The finish time is
-// status.completionTime (set from the Job) or, for Tasks that never ran
-// a Job or whose Job reported none, the Ready condition's last
-// transition. ok is false when there is no TTL or no usable timestamp.
+// deletionDeadline returns the time at which a terminal Task becomes
+// eligible for garbage collection. The deadline is the finish time plus
+// spec.ttlSecondsAfterFinished, or plus defaultTTL when the spec leaves it
+// unset. The finish time is status.completionTime, which comes from the
+// Job. For a Task that never ran a Job, or whose Job reported no
+// completion time, the finish time is the last transition of the Ready
+// condition. ok is false when there is no TTL or no usable timestamp.
 func deletionDeadline(task *conveyorv1alpha1.Task, defaultTTL *int32) (time.Time, bool) {
 	ttl := task.Spec.TTLSecondsAfterFinished
 	if ttl == nil {
@@ -252,9 +254,9 @@ func deletionDeadline(task *conveyorv1alpha1.Task, defaultTTL *int32) (time.Time
 	return finished.Add(time.Duration(*ttl) * time.Second), true
 }
 
-// equalStatus reports whether two statuses are semantically equal,
-// ignoring condition order and LastTransitionTime (which only moves
-// when something else changed anyway).
+// equalStatus reports whether two statuses are semantically equal. It
+// ignores the condition order and LastTransitionTime, which only moves
+// when something else changed.
 func equalStatus(a, b *conveyorv1alpha1.TaskStatus) bool {
 	if a.Phase != b.Phase || a.JobName != b.JobName {
 		return false

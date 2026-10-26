@@ -21,9 +21,10 @@ import (
 // defaults spec.signature.algorithm to it (clustertriggerclass_types.go).
 const algorithmSHA256 = "sha256"
 
-// Sentinel verification errors. The first two are caller failures
-// (respond 401); the last two are operator configuration problems the
-// caller cannot fix (respond 500).
+// These are the sentinel verification errors. The first two are caller
+// failures, and the handler responds 401. The last two are operator
+// configuration problems that the caller cannot fix, and the handler
+// responds 500.
 var (
 	ErrMissingSignature     = errors.New("missing signature header")
 	ErrSignatureMismatch    = errors.New("signature mismatch")
@@ -33,14 +34,15 @@ var (
 
 // VerifyHMAC compares a provided header signature against HMAC(secret, body).
 //
-// `algorithm` accepts "sha256" (blank is treated as sha256 since the CRD
-// defaults it). `prefix` is stripped from the header value before
-// comparison, matching GitHub's "sha256=<hex>" convention. Comparison
-// is constant-time to prevent timing leaks.
+// `algorithm` accepts "sha256". The function treats a blank value as
+// sha256, because the CRD defaults it. The function strips `prefix` from
+// the header value before the comparison, which matches the GitHub
+// "sha256=<hex>" convention. The comparison is constant-time to prevent
+// timing leaks.
 //
-// This is deliberately minimal — the adapter's threat model is "public
-// HTTPS endpoint + shared secret"; users who need OAuth or mTLS terminate
-// that at the ingress.
+// The function is minimal by design. The threat model of the adapter is
+// "public HTTPS endpoint + shared secret". Users who need OAuth or mTLS
+// terminate that at the ingress.
 func VerifyHMAC(algorithm, prefix, headerValue string, secret, body []byte) error {
 	if headerValue == "" {
 		return ErrMissingSignature

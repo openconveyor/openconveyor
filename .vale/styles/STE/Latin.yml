@@ -1,0 +1,12 @@
+extends: existence
+message: "Do not use '%s'. Write 'for example', 'that is', 'and more', or 'with'."
+link: https://github.com/openconveyor/openconveyor/blob/main/docs/writing-style.md#sentence-rules
+level: warning
+ignorecase: true
+nonword: true
+tokens:
+  - '\be\.g\.'
+  - '\bi\.e\.'
+  - '\betc\.'
+  - '\bvs\.'
+  - '\bvia\b'

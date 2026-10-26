@@ -204,7 +204,7 @@ func TestBuildTask_ConfigMapping(t *testing.T) {
 		}
 	}
 
-	// The shared template's config must not be mutated by the merge.
+	// The merge must not mutate the config of the shared template.
 	if string(tmpl.Agent.Config.Raw) != `{"TARGET_BRANCH":"main","KEEP":"tmpl"}` {
 		t.Errorf("template config mutated: %s", tmpl.Agent.Config.Raw)
 	}

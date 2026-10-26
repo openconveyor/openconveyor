@@ -13,9 +13,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// Metrics registered via promauto live in a process-global registry, so
+// Metrics that promauto registers are in a process-global registry, so
 // increments from other tests in the same binary can leak in. Each test
-// here uses a fresh label combination so reads are deterministic.
+// here uses a fresh label combination, so reads are deterministic.
 
 func TestObservePhaseTransition(t *testing.T) {
 	ObservePhaseTransition("Completed", "Completed")
@@ -41,7 +41,7 @@ func TestObserveTaskDuration(t *testing.T) {
 	ObserveTaskDuration("Failed", 30.0)
 
 	// CollectAndCount on the HistogramVec returns the number of distinct
-	// label combinations currently tracked — one child per phase observed.
+	// label combinations that it currently tracks: one child per observed phase.
 	got := testutil.CollectAndCount(TaskDurationSeconds)
 	if got < 1 {
 		t.Fatalf("duration histogram stream count: got %v, want >= 1", got)

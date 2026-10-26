@@ -45,13 +45,14 @@ spec:
             properties:
               filters:
                 description: |-
-                  filters are ANDed; the webhook is dropped if any fails.
-                  Typical use: filter GitHub "issues" events to "labeled" action with
-                  a specific label, or Linear updates to a specific stateId.
+                  filters are the conditions that an event must all satisfy. The adapter
+                  drops the webhook when one filter fails. A typical use filters GitHub
+                  "issues" events to the "labeled" action with a specific label, or Linear
+                  updates to a specific stateId.
                 items:
                   description: |-
-                    WebhookFilter is a simple gjson equality filter. The webhook adapter
-                    only emits a Task when every filter matches.
+                    WebhookFilter is a gjson equality filter. The webhook adapter
+                    creates a Task only when every filter matches.
                   properties:
                     equals:
                       description: equals is the expected string value.
@@ -65,31 +66,34 @@ spec:
                   type: object
                 type: array
               path:
-                description: path is the HTTP path the adapter listens on, e.g. "/linear"
+                description: |-
+                  path is the HTTP path on which the adapter listens, for example "/linear"
                   or "/github".
                 type: string
               signature:
-                description: signature declares how to verify the inbound webhook.
+                description: signature declares how the adapter verifies the inbound
+                  webhook.
                 properties:
                   algorithm:
                     default: sha256
-                    description: algorithm is the HMAC algorithm. Only "sha256" is
-                      supported for now.
+                    description: |-
+                      algorithm is the HMAC algorithm. The adapter supports only "sha256" at
+                      this time.
                     type: string
                   header:
                     description: |-
-                      header is the HTTP header that carries the signature,
-                      e.g. "X-Hub-Signature-256" (GitHub), "Linear-Signature".
+                      header is the HTTP header that carries the signature, for example
+                      "X-Hub-Signature-256" (GitHub) or "Linear-Signature".
                     type: string
                   prefix:
                     description: |-
-                      prefix is stripped from the header value before comparison, e.g. "sha256="
-                      for GitHub's "sha256=<hex>" format.
+                      prefix is the text that the adapter removes from the header value before
+                      the comparison, for example "sha256=" for the GitHub "sha256=<hex>" format.
                     type: string
                   secretRef:
                     description: |-
-                      secretRef names the Secret containing the shared signing secret.
-                      The Secret must live in the same namespace as the webhook adapter.
+                      secretRef names the Secret that contains the shared signing secret.
+                      The Secret must be in the same namespace as the webhook adapter.
                     properties:
                       key:
                         description: The key of the secret to select from.  Must be
@@ -117,19 +121,22 @@ spec:
                 - secretRef
                 type: object
               task:
-                description: task is the Task template the adapter materializes.
+                description: task is the Task template from which the adapter creates
+                  each Task.
                 properties:
                   agent:
-                    description: agent is the AgentRef copied into every emitted Task.
+                    description: agent is the AgentRef that the adapter copies into
+                      every Task it creates.
                     properties:
                       config:
                         description: |-
                           config is non-secret, agent-specific configuration as a JSON object.
-                          Top-level scalar fields are projected into the agent container as
-                          environment variables named after the field (e.g. TARGET_REPO). The
-                          full JSON is additionally delivered at the AgentClass-declared
-                          inputs.config mount path and/or env var, when set. Never put secrets
-                          here — env vars leak into /proc; use permissions.secrets instead.
+                          The controller projects each top-level scalar field into the agent
+                          container as an environment variable with the name of the field, for
+                          example TARGET_REPO. When the ClusterAgentClass declares an inputs.config
+                          mount path, an environment variable, or both, the controller also
+                          delivers the full JSON there. Never put secrets here, because
+                          environment variables leak into /proc. Use permissions.secrets for secrets.
                         type: object
                         x-kubernetes-preserve-unknown-fields: true
                       ref:
@@ -141,35 +148,36 @@ spec:
                   generateNamePrefix:
                     default: task-
                     description: |-
-                      generateNamePrefix is prepended to a hash of the event payload to form
-                      the Task name, unless a "name" FieldMapping overrides it.
+                      generateNamePrefix is the text that the adapter puts before a hash of the
+                      event payload to form the Task name. A "name" FieldMapping replaces this
+                      name.
                     type: string
                   mappings:
-                    description: mappings populate fields of the emitted Task from
+                    description: mappings populate fields of the created Task from
                       the webhook payload.
                     items:
                       description: |-
-                        FieldMapping extracts a value from the webhook payload (JSON) via
+                        FieldMapping extracts a value from the webhook payload (JSON) with
                         a gjson-style path and maps it to a Task spec field.
                       properties:
                         default:
-                          description: default is used if the path does not resolve.
+                          description: default is the value that the adapter uses
+                            when the path does not resolve.
                           type: string
                         from:
                           description: |-
-                            from is a gjson path into the webhook body, e.g.
+                            from is a gjson path into the webhook body, for example
                             "issue.title" or "pull_request.head.ref".
                           type: string
                         to:
                           description: |-
-                            to is the target Task field. Accepted values:
-                              "prompt"              — body of Task.spec.prompt.inline
-                              "labels.<key>"        — set a label on the Task
-                              "annotations.<key>"   — set an annotation on the Task
-                              "name"                — override the generated Task name
-                              "config.<key>"        — set Task.spec.agent.config.<key>, which the
-                                                      controller projects into the agent container
-                                                      as the env var $<key>
+                            to is the target Task field. The adapter accepts these values:
+                              - "prompt": the body of Task.spec.prompt.inline
+                              - "labels.<key>": a label on the Task
+                              - "annotations.<key>": an annotation on the Task
+                              - "name": the Task name, in place of the generated name
+                              - "config.<key>": Task.spec.agent.config.<key>, which the controller
+                                projects into the agent container as the environment variable $<key>
                           type: string
                       required:
                       - from
@@ -177,17 +185,21 @@ spec:
                       type: object
                     type: array
                   namespace:
-                    description: namespace is where Tasks will be created. Defaults
-                      to the adapter's namespace.
+                    description: |-
+                      namespace is the namespace in which the adapter creates the Tasks. The
+                      default is the namespace of the adapter.
                     type: string
                   permissions:
-                    description: permissions is copied into every emitted Task.
+                    description: |-
+                      permissions is the Permissions value that the adapter copies into every
+                      Task it creates.
                     properties:
                       egress:
                         description: |-
-                          egress is the allowlist of DNS names, IP addresses or CIDR blocks the
-                          Task may reach. Default-deny otherwise. Resolved to NetworkPolicy egress
-                          rules at reconcile time.
+                          egress is the allowlist of DNS names, IP addresses or CIDR blocks that
+                          the Task can reach. Without entries, the controller denies all egress.
+                          The controller resolves the entries to NetworkPolicy egress rules at
+                          reconcile time.
                         items:
                           maxLength: 253
                           type: string
@@ -199,9 +211,9 @@ spec:
                       egressPorts:
                         description: |-
                           egressPorts restricts every egress allowlist entry to these
-                          destination ports (TCP and UDP). Unset means [443]. It does not
+                          destination ports (TCP and UDP). The default is [443]. It does not
                           apply to the DNS rule, which always uses port 53. Ports are a
-                          separate field rather than a ":port" suffix on egress entries
+                          separate field and not a ":port" suffix on the egress entries,
                           because IPv6 CIDRs contain colons.
                         items:
                           format: int32
@@ -213,12 +225,14 @@ spec:
                         x-kubernetes-list-type: set
                       rbac:
                         description: |-
-                          rbac is the list of Kubernetes RBAC rules the Task needs. Empty means
-                          the Task has no ServiceAccount token and cannot talk to the k8s API.
+                          rbac is the list of Kubernetes RBAC rules that the Task needs. When it
+                          is empty, the Task has no ServiceAccount token and cannot call the
+                          Kubernetes API.
                         items:
                           description: |-
-                            RBACRule is a minimal Kubernetes RBAC policy rule. Mirrors rbacv1.PolicyRule
-                            but kept local so the Task CRD schema does not transitively embed rbac/v1.
+                            RBACRule is a minimal Kubernetes RBAC policy rule. It mirrors
+                            rbacv1.PolicyRule. The type is local, so that the Task CRD schema does not
+                            embed rbac/v1 transitively.
                           properties:
                             apiGroups:
                               items:
@@ -247,25 +261,31 @@ spec:
                         type: array
                       secrets:
                         description: |-
-                          secrets is the list of Secret names (in the Task's namespace) projected
-                          as files at /run/secrets/<name>/<key>, one file per Secret key. Env-var
-                          injection is intentionally not supported — env vars leak into /proc.
+                          secrets is the list of Secret names (in the namespace of the Task) that
+                          the controller projects as files at /run/secrets/<name>/<key>, one file
+                          for each Secret key. The controller does not support injection through
+                          environment variables by design, because environment variables leak
+                          into /proc.
                         items:
                           type: string
                         type: array
                     type: object
                   resources:
-                    description: resources is copied into every emitted Task.
+                    description: |-
+                      resources is the TaskResources value that the adapter copies into every
+                      Task it creates.
                     properties:
                       cpu:
-                        description: cpu request/limit, e.g. "500m" or "1".
+                        description: cpu is the CPU request and limit, for example
+                          "500m" or "1".
                         type: string
                         x-kubernetes-validations:
                         - message: must be a non-negative Kubernetes resource quantity,
                             e.g. '500m' or '1'
                           rule: isQuantity(self) && !quantity(self).isLessThan(quantity('0'))
                       memory:
-                        description: memory request/limit, e.g. "512Mi" or "1Gi".
+                        description: memory is the memory request and limit, for example
+                          "512Mi" or "1Gi".
                         type: string
                         x-kubernetes-validations:
                         - message: must be a non-negative Kubernetes resource quantity,
@@ -273,8 +293,8 @@ spec:
                           rule: isQuantity(self) && !quantity(self).isLessThan(quantity('0'))
                       timeout:
                         description: |-
-                          timeout is mandatory. The controller rejects Tasks without one.
-                          Mapped to Job.spec.activeDeadlineSeconds.
+                          timeout is mandatory. The controller rejects a Task without one.
+                          The controller maps it to Job.spec.activeDeadlineSeconds.
                         type: string
                         x-kubernetes-validations:
                         - message: must be a valid duration greater than 0 (e.g. '30m')
@@ -284,8 +304,9 @@ spec:
                     type: object
                   ttlSecondsAfterFinished:
                     description: |-
-                      ttlSecondsAfterFinished is copied into every emitted Task. Webhook
-                      Tasks accumulate without it; see Task.spec.ttlSecondsAfterFinished.
+                      ttlSecondsAfterFinished is the TTL that the adapter copies into every
+                      Task it creates. Without it, webhook Tasks accumulate. See
+                      Task.spec.ttlSecondsAfterFinished.
                     format: int32
                     minimum: 0
                     type: integer

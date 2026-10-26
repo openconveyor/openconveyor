@@ -39,7 +39,7 @@ func TestServer_StartAndShutdown(t *testing.T) {
 	}()
 
 	// Wait for the server to be ready. Only a 200 counts: a reachable
-	// server returning non-200 must fail the test, not slip past it.
+	// server that returns non-200 must fail the test.
 	ready := false
 	var lastStatus int
 	var lastErr error
@@ -61,7 +61,7 @@ func TestServer_StartAndShutdown(t *testing.T) {
 		t.Fatalf("server did not become ready: lastStatus=%d lastErr=%v", lastStatus, lastErr)
 	}
 
-	// Cancel the context to trigger shutdown.
+	// Cancel the context to start the shutdown.
 	cancel()
 
 	select {

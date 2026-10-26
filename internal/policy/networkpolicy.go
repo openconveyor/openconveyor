@@ -43,9 +43,9 @@ func (DefaultResolver) LookupHost(ctx context.Context, host string) ([]string, e
 	return net.DefaultResolver.LookupHost(ctx, host)
 }
 
-// StaticResolver serves fixed lookup results — the injectable test
-// double for Resolver, shared by this package's tests and the
-// controller's envtest suite. Err, when set, fails every lookup.
+// StaticResolver serves fixed lookup results. It is the injectable test
+// double for Resolver. The tests of this package and the envtest suite of
+// the controller share it. When a test sets Err, every lookup fails.
 type StaticResolver struct {
 	Hosts map[string][]string
 	Err   error
@@ -62,11 +62,11 @@ func (s StaticResolver) LookupHost(_ context.Context, host string) ([]string, er
 
 // DefaultEgressPort is the only destination port the egress allowlist
 // opens when spec.permissions.egressPorts is unset. HTTPS covers every
-// API an agent normally talks to; anything else must be declared.
+// API that an agent normally calls. The Task must declare any other port.
 const DefaultEgressPort int32 = 443
 
-// DNS egress target: the stock CoreDNS label set on every mainstream
-// k8s distro, reached on the standard DNS port.
+// The DNS egress target is the stock CoreDNS label set on every
+// mainstream Kubernetes distribution, on the standard DNS port.
 const (
 	dnsPort              = 53
 	kubeSystemNamespace  = "kube-system"
@@ -76,25 +76,25 @@ const (
 )
 
 // BuildNetworkPolicy produces a NetworkPolicy that applies default-deny
-// to the Task's pod. The policy is always emitted (never nil) so every
-// Task gets the full default-deny baseline; callers never have to worry
-// about a "no egress" edge case silently leaving the CNI wide open.
+// to the pod of the Task. The function always returns a policy, never nil,
+// so every Task has the full default-deny baseline. Callers do not have
+// to handle a "no egress" edge case that leaves the CNI not restricted.
 //
-// When spec.permissions.egress is empty the result is pure deny-all:
-// the pod cannot reach anything, not even DNS. This matches the intent
-// that an agent with no declared outbound needs should not have any.
+// When spec.permissions.egress is empty, the result is pure deny-all: the
+// pod cannot reach anything, not even DNS. This matches the intent that an
+// agent with no declared outbound needs has no outbound access.
 //
-// When spec.permissions.egress is populated the policy also allows:
+// When spec.permissions.egress is not empty, the policy also allows:
 //
-//   - DNS (53/udp + tcp) to kube-system/k8s-app=kube-dns — needed for
-//     hostname entries to be useful from inside the pod.
-//   - Each allowlisted egress target on the given ports (TCP and UDP),
-//     or on DefaultEgressPort alone when ports is empty.
+//   - DNS (53/udp and tcp) to kube-system/k8s-app=kube-dns. The pod needs
+//     this rule to use the hostname entries.
+//   - Each allowlisted egress target on the given ports (TCP and UDP), or
+//     on DefaultEgressPort alone when ports is empty.
 //
-// Hostnames are resolved once at reconcile time. DNS-based allowlists
-// are a best-effort snapshot; for stable FQDN enforcement, users should
-// deploy Cilium and let its FQDN policies do the work. Documented in
-// docs/security-model.md.
+// The function resolves hostnames once at reconcile time. A DNS-based
+// allowlist is a best-effort snapshot. For stable FQDN enforcement, deploy
+// Cilium and let its FQDN policies do the work. docs/security-model.md
+// documents this.
 func BuildNetworkPolicy(
 	ctx context.Context,
 	resolver Resolver,
@@ -126,17 +126,17 @@ func BuildNetworkPolicy(
 				networkingv1.PolicyTypeIngress,
 				networkingv1.PolicyTypeEgress,
 			},
-			// Empty Ingress with PolicyTypes=[Ingress] means deny-all ingress
-			// — agent Jobs have no reason to accept inbound connections.
+			// An empty Ingress with PolicyTypes=[Ingress] means deny-all ingress.
+			// Agent Jobs have no reason to accept inbound connections.
 			Ingress: nil,
 			Egress:  rules,
 		},
 	}, nil
 }
 
-// HasHostnames reports whether any allowlist entry is a DNS name rather
-// than an IP or CIDR. Only names drift, so only Tasks with names need
-// their NetworkPolicy re-resolved while they run.
+// HasHostnames reports whether any allowlist entry is a DNS name and not
+// an IP or CIDR. Only names drift, so the controller re-resolves the
+// NetworkPolicy only for Tasks with names while they run.
 func HasHostnames(egress []string) bool {
 	for _, entry := range egress {
 		entry = strings.TrimSpace(entry)
@@ -148,13 +148,14 @@ func HasHostnames(egress []string) bool {
 	return false
 }
 
-// resolveEgress normalises each entry in the allowlist to a CIDR string.
+// resolveEgress normalizes each entry in the allowlist to a CIDR string.
 //
-//   - Exact CIDR (contains "/") is passed through after parse validation.
-//   - Hostname is resolved via the Resolver; each A/AAAA becomes /32 or /128.
-//   - Bare IP is converted to /32 or /128.
+//   - The function validates an exact CIDR (contains "/") and passes it through.
+//   - The function resolves a hostname with the Resolver; each A/AAAA record
+//     becomes /32 or /128.
+//   - The function converts a bare IP to /32 or /128.
 //
-// Duplicates are collapsed and the result is sorted for deterministic output.
+// The function collapses duplicates and sorts the result for deterministic output.
 func resolveEgress(ctx context.Context, resolver Resolver, egress []string) ([]string, error) {
 	set := map[string]struct{}{}
 	for _, entry := range egress {
@@ -195,8 +196,9 @@ func resolveEgress(ctx context.Context, resolver Resolver, egress []string) ([]s
 	return slices.Sorted(maps.Keys(set)), nil
 }
 
-// lookupWithTimeout resolves one host under lookupTimeout. Timeouts are
-// transient by design (no PermanentError) so callers back off and retry.
+// lookupWithTimeout resolves one host under lookupTimeout. By design, a
+// timeout is transient and not a PermanentError, so callers back off and
+// retry.
 func lookupWithTimeout(ctx context.Context, resolver Resolver, host string) ([]string, error) {
 	lctx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	defer cancel()
@@ -220,10 +222,10 @@ func toIPBlocks(cidrs []string) []networkingv1.NetworkPolicyPeer {
 	return peers
 }
 
-// egressPorts expands the declared ports (DefaultEgressPort when none)
-// into one TCP and one UDP entry each, sorted and de-duplicated. Both
-// protocols are opened because the previous rule allowed both and
-// HTTP/3 runs over UDP 443.
+// egressPorts expands the declared ports, or DefaultEgressPort when there
+// are none, into one TCP and one UDP entry each. It sorts and deduplicates
+// the ports. It opens both protocols because the previous rule allowed
+// both and HTTP/3 runs over UDP 443.
 func egressPorts(ports []int32) []networkingv1.NetworkPolicyPort {
 	if len(ports) == 0 {
 		ports = []int32{DefaultEgressPort}
@@ -241,9 +243,10 @@ func egressPorts(ports []int32) []networkingv1.NetworkPolicyPort {
 	return out
 }
 
-// dnsEgressRule allows DNS queries to any pod labeled k8s-app=kube-dns in
-// kube-system — the stock CoreDNS label set on every mainstream k8s distro.
-// Without this rule the pod cannot resolve the names the user listed.
+// dnsEgressRule allows DNS queries to any pod with the label
+// k8s-app=kube-dns in kube-system. This is the stock CoreDNS label set on
+// every mainstream Kubernetes distribution. Without this rule, the pod
+// cannot resolve the names that the user listed.
 func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 	port := new(intstr.FromInt32(dnsPort))
 	return networkingv1.NetworkPolicyEgressRule{

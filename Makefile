@@ -100,6 +100,15 @@ lint: golangci-lint ## Run golangci-lint linter
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	"$(GOLANGCI_LINT)" run --fix
 
+# Prose check: Simplified Technical English rules from docs/writing-style.md.
+# The paths and the glob mirror .github/workflows/docs-lint.yml; keep them in step.
+VALE_PATHS ?= README.md CLAUDE.md AGENTS.md GLOSSARY.md CONTRIBUTING.md MAINTAINERS.md SECURITY.md docs examples api cmd internal test .github
+VALE_GLOB ?= !{CHANGELOG.md,CODE_OF_CONDUCT.md,LICENSE,**/zz_generated*,bin/**,dist/**,config/crd/**}
+
+.PHONY: lint-docs
+lint-docs: vale ## Check prose (Markdown and Go comments) with Vale; warnings only.
+	"$(VALE)" --glob='$(VALE_GLOB)' $(VALE_PATHS)
+
 .PHONY: lint-config
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
@@ -187,6 +196,7 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+VALE ?= $(LOCALBIN)/vale
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
@@ -203,6 +213,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.15.0
+VALE_VERSION ?= v3.25.1
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
@@ -235,6 +246,11 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 		$(GOLANGCI_LINT) custom --destination $(LOCALBIN) --name golangci-lint-custom && \
 		mv -f $(LOCALBIN)/golangci-lint-custom $(GOLANGCI_LINT); \
 	} || true
+
+.PHONY: vale
+vale: $(VALE) ## Download vale locally if necessary.
+$(VALE): $(LOCALBIN)
+	$(call go-install-tool,$(VALE),github.com/vale-cli/vale/v3/cmd/vale,$(VALE_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

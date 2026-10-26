@@ -1,7 +1,7 @@
-# Positive e2e scenario (#39): a Task with no permissions on a busybox
-# agent that reads its prompt and exits 0. Lifted from the manual kind
-# smoke in #57. Applied and deleted by test/e2e/task_test.go; the
-# namespace is created by the suite.
+# The positive e2e scenario (#39): a Task with no permissions on a busybox
+# agent that reads its prompt and exits 0. It comes from the manual kind
+# smoke test in #57. test/e2e/task_test.go applies and deletes it; the
+# suite creates the namespace.
 apiVersion: openconveyor.ai/v1alpha1
 kind: ClusterAgentClass
 metadata:
@@ -25,7 +25,7 @@ spec:
     ref: e2e-busybox
   prompt:
     inline: hello from the e2e suite
-  # Task GC (#21): the Task deletes itself a minute after it finishes.
+  # Task GC (#21): the controller deletes the Task one minute after it finishes.
   ttlSecondsAfterFinished: 60
   resources:
     cpu: 100m

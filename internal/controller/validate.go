@@ -17,8 +17,9 @@ import (
 )
 
 // validateTask is the in-reconciler backstop behind the CRD's CEL rules
-// (api/v1alpha1/task_types.go). CEL rejects invalid specs at admission;
-// this catches objects that predate those rules or bypassed them.
+// (api/v1alpha1/task_types.go). CEL rejects invalid specs at admission.
+// This function catches objects that predate those rules or that bypassed
+// them.
 func validateTask(task *conveyorv1alpha1.Task) error {
 	if task.Spec.Resources.Timeout.Duration <= 0 {
 		return errors.New("spec.resources.timeout must be > 0")

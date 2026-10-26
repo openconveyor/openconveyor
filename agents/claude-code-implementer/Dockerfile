@@ -1,20 +1,22 @@
 # Reference agent image for the "implementer" archetype.
 #
 # Contract (see docs/plugin-authoring.md):
-#   * ENTRYPOINT reads /task/prompt, reads secrets from /run/secrets/<name>/,
-#     exits 0 on success and non-zero on failure.
-#   * Binary runs as UID 65532 under a read-only root filesystem. Writable
-#     state must land under /tmp (mounted as an emptyDir by conveyor).
+#   * The ENTRYPOINT reads /task/prompt and reads the secrets from
+#     /run/secrets/<name>/. It exits 0 on success and non-zero on failure.
+#   * The binary runs as UID 65532 under a read-only root filesystem. The
+#     entrypoint must write all state under /tmp. conveyor mounts /tmp as an
+#     emptyDir.
 #
-# Tooling: Claude Code CLI + git + gh. Git-host abstraction is stubbed to
-# GitHub until the `conveyor-git` helper lands (post-v0.1.0).
+# Tooling: the Claude Code CLI, git and gh. The image supports only GitHub as
+# the git host until the project releases the `conveyor-git` helper
+# (post-v0.1.0).
 
-# Base image pinned to a minor tag plus digest; dependabot (docker
-# ecosystem, agents/*) bumps both together.
+# The FROM line pins the base image to a minor tag plus a digest. Dependabot
+# (docker ecosystem, agents/*) updates both together.
 FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
 
-# Claude Code CLI version, identical across the three reference agents.
-# Bumped by hand in chore(agents) PRs.
+# The Claude Code CLI version is identical across the three reference agents.
+# A maintainer updates it by hand in chore(agents) PRs.
 ARG CLAUDE_CODE_VERSION=2.1.311
 
 RUN apt-get update \
@@ -34,7 +36,7 @@ RUN apt-get update \
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
 # conveyor enforces UID 65532 (see internal/controller/build.go:nonRootUID).
-# Pre-create the user so HOME resolution inside git/gh works even on a
+# Create the user in the image so that git and gh can resolve HOME on a
 # read-only rootfs. All transient state goes to /tmp (the emptyDir mount).
 RUN groupadd --system --gid 65532 conveyor \
     && useradd --system --uid 65532 --gid 65532 --home-dir /tmp --shell /usr/sbin/nologin conveyor

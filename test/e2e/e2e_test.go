@@ -33,24 +33,25 @@ import (
 	"github.com/openconveyor/openconveyor/test/utils"
 )
 
-// namespace where the project is deployed in
+// namespace is the namespace where the suite deploys the project.
 const namespace = "conveyor-system"
 
-// serviceAccountName created for the project
+// serviceAccountName is the ServiceAccount that the manifests create for the project.
 const serviceAccountName = "conveyor-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
 const metricsServiceName = "conveyor-controller-manager-metrics-service"
 
-// metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
+// metricsRoleBindingName is the name of the ClusterRoleBinding that the suite
+// creates to allow reads of the metrics data.
 const metricsRoleBindingName = "conveyor-metrics-binding"
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
 
-	// Before running the tests, set up the environment by creating the namespace,
-	// enforce the restricted security policy to the namespace, installing CRDs,
-	// and deploying the controller.
+	// Before the tests run, set up the environment: create the namespace,
+	// enforce the restricted security policy on the namespace, install the
+	// CRDs, and deploy the controller.
 	BeforeAll(func() {
 		By("creating manager namespace")
 		cmd := exec.Command("kubectl", "create", "ns", namespace)
@@ -74,8 +75,8 @@ var _ = Describe("Manager", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
 
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
-	// and deleting the namespace.
+	// After all tests complete, clean up: undeploy the controller, uninstall
+	// the CRDs, and delete the namespace.
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
@@ -275,21 +276,21 @@ var _ = Describe("Manager", Ordered, func() {
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 	})
 
-	// Real Task scenarios (#39) live in task_test.go. They run here, after
-	// the controller is up, because the suite is Ordered.
+	// The real Task scenarios (#39) are in task_test.go. They run here, after
+	// the controller is up, because the suite uses the Ordered decorator.
 	Context("Task", taskSpecs)
 })
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
-// It uses the Kubernetes TokenRequest API to generate a token by directly sending a request
-// and parsing the resulting token from the API response.
+// It sends a request directly to the Kubernetes TokenRequest API and parses the
+// token from the API response.
 func serviceAccountToken() (string, error) {
 	const tokenRequestRawString = `{
 		"apiVersion": "authentication.k8s.io/v1",
 		"kind": "TokenRequest"
 	}`
 
-	// Temporary file to store the token request
+	// A temporary file stores the token request.
 	secretName := fmt.Sprintf("%s-token-request", serviceAccountName)
 	tokenRequestFile := filepath.Join("/tmp", secretName)
 	err := os.WriteFile(tokenRequestFile, []byte(tokenRequestRawString), os.FileMode(0o644))
@@ -299,7 +300,7 @@ func serviceAccountToken() (string, error) {
 
 	var out string
 	verifyTokenCreation := func(g Gomega) {
-		// Execute kubectl command to create the token
+		// Run the kubectl command that creates the token.
 		cmd := exec.Command("kubectl", "create", "--raw", fmt.Sprintf(
 			"/api/v1/namespaces/%s/serviceaccounts/%s/token",
 			namespace,
@@ -321,15 +322,15 @@ func serviceAccountToken() (string, error) {
 	return out, err
 }
 
-// getMetricsOutput retrieves and returns the logs from the curl pod used to access the metrics endpoint.
+// getMetricsOutput returns the logs from the curl pod that accesses the metrics endpoint.
 func getMetricsOutput() (string, error) {
 	By("getting the curl-metrics logs")
 	cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
 	return utils.Run(cmd)
 }
 
-// tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
-// containing only the token field that we need to extract.
+// tokenRequest is a simplified representation of the Kubernetes TokenRequest API response.
+// It contains only the token field that the suite extracts.
 type tokenRequest struct {
 	Status struct {
 		Token string `json:"token"`

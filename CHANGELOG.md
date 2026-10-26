@@ -80,6 +80,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Docs:** all prose follows ASD-STE100 Simplified Technical English:
+  the README (rewritten), the guides, the ADRs (decisions unchanged), the
+  Go doc comments, and the comments in the agent images and sample YAML
+  (ADR-0007, `docs/writing-style.md`). Vale checks the mechanical rules
+  (`make lint-docs`, the `Docs Lint` workflow; warnings only). Mermaid
+  diagrams replace the ASCII art.
 - **Agents/CI:** the three reference agent images pin their base image to a
   minor tag plus digest (`node:22.23.4-bookworm-slim@sha256:…`) and the
   Claude Code CLI to an exact version through a `CLAUDE_CODE_VERSION` build

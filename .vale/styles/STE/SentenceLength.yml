@@ -1,0 +1,7 @@
+extends: occurrence
+message: "Sentence has more than 25 words. Keep a descriptive sentence to 25 words and an instruction to 20."
+link: https://github.com/openconveyor/openconveyor/blob/main/docs/writing-style.md#sentence-rules
+level: warning
+scope: sentence
+max: 25
+token: '\b(\w+)\b'

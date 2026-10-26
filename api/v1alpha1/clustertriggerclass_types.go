@@ -23,56 +23,56 @@ import (
 )
 
 // WebhookSignature describes how the reference webhook adapter validates
-// inbound requests. Supports HMAC schemes common across providers
-// (GitHub, Linear, GitLab, Forgejo).
+// inbound requests. It supports the HMAC schemes that GitHub, Linear, GitLab
+// and Forgejo use.
 type WebhookSignature struct {
-	// header is the HTTP header that carries the signature,
-	// e.g. "X-Hub-Signature-256" (GitHub), "Linear-Signature".
+	// header is the HTTP header that carries the signature, for example
+	// "X-Hub-Signature-256" (GitHub) or "Linear-Signature".
 	// +required
 	Header string `json:"header"`
 
-	// algorithm is the HMAC algorithm. Only "sha256" is supported for now.
+	// algorithm is the HMAC algorithm. The adapter supports only "sha256" at
+	// this time.
 	// +optional
 	// +kubebuilder:default=sha256
 	Algorithm string `json:"algorithm,omitempty"`
 
-	// prefix is stripped from the header value before comparison, e.g. "sha256="
-	// for GitHub's "sha256=<hex>" format.
+	// prefix is the text that the adapter removes from the header value before
+	// the comparison, for example "sha256=" for the GitHub "sha256=<hex>" format.
 	// +optional
 	Prefix string `json:"prefix,omitempty"`
 
-	// secretRef names the Secret containing the shared signing secret.
-	// The Secret must live in the same namespace as the webhook adapter.
+	// secretRef names the Secret that contains the shared signing secret.
+	// The Secret must be in the same namespace as the webhook adapter.
 	// +required
 	SecretRef corev1.SecretKeySelector `json:"secretRef"`
 }
 
-// FieldMapping extracts a value from the webhook payload (JSON) via
+// FieldMapping extracts a value from the webhook payload (JSON) with
 // a gjson-style path and maps it to a Task spec field.
 type FieldMapping struct {
-	// from is a gjson path into the webhook body, e.g.
+	// from is a gjson path into the webhook body, for example
 	// "issue.title" or "pull_request.head.ref".
 	// +required
 	From string `json:"from"`
 
-	// to is the target Task field. Accepted values:
-	//   "prompt"              — body of Task.spec.prompt.inline
-	//   "labels.<key>"        — set a label on the Task
-	//   "annotations.<key>"   — set an annotation on the Task
-	//   "name"                — override the generated Task name
-	//   "config.<key>"        — set Task.spec.agent.config.<key>, which the
-	//                           controller projects into the agent container
-	//                           as the env var $<key>
+	// to is the target Task field. The adapter accepts these values:
+	//   - "prompt": the body of Task.spec.prompt.inline
+	//   - "labels.<key>": a label on the Task
+	//   - "annotations.<key>": an annotation on the Task
+	//   - "name": the Task name, in place of the generated name
+	//   - "config.<key>": Task.spec.agent.config.<key>, which the controller
+	//     projects into the agent container as the environment variable $<key>
 	// +required
 	To string `json:"to"`
 
-	// default is used if the path does not resolve.
+	// default is the value that the adapter uses when the path does not resolve.
 	// +optional
 	Default string `json:"default,omitempty"`
 }
 
-// WebhookFilter is a simple gjson equality filter. The webhook adapter
-// only emits a Task when every filter matches.
+// WebhookFilter is a gjson equality filter. The webhook adapter
+// creates a Task only when every filter matches.
 type WebhookFilter struct {
 	// path is a gjson path into the webhook body.
 	// +required
@@ -83,66 +83,74 @@ type WebhookFilter struct {
 	Equals string `json:"equals"`
 }
 
-// TaskTemplate is the prototype Task the webhook adapter materializes on each fire.
+// TaskTemplate is the prototype Task that the webhook adapter creates for each
+// accepted event.
 type TaskTemplate struct {
-	// namespace is where Tasks will be created. Defaults to the adapter's namespace.
+	// namespace is the namespace in which the adapter creates the Tasks. The
+	// default is the namespace of the adapter.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
-	// generateNamePrefix is prepended to a hash of the event payload to form
-	// the Task name, unless a "name" FieldMapping overrides it.
+	// generateNamePrefix is the text that the adapter puts before a hash of the
+	// event payload to form the Task name. A "name" FieldMapping replaces this
+	// name.
 	// +optional
 	// +kubebuilder:default=task-
 	GenerateNamePrefix string `json:"generateNamePrefix,omitempty"`
 
-	// agent is the AgentRef copied into every emitted Task.
+	// agent is the AgentRef that the adapter copies into every Task it creates.
 	// +required
 	Agent AgentRef `json:"agent"`
 
-	// permissions is copied into every emitted Task.
+	// permissions is the Permissions value that the adapter copies into every
+	// Task it creates.
 	// +optional
 	Permissions Permissions `json:"permissions,omitempty"`
 
-	// resources is copied into every emitted Task.
+	// resources is the TaskResources value that the adapter copies into every
+	// Task it creates.
 	// +required
 	Resources TaskResources `json:"resources"`
 
-	// ttlSecondsAfterFinished is copied into every emitted Task. Webhook
-	// Tasks accumulate without it; see Task.spec.ttlSecondsAfterFinished.
+	// ttlSecondsAfterFinished is the TTL that the adapter copies into every
+	// Task it creates. Without it, webhook Tasks accumulate. See
+	// Task.spec.ttlSecondsAfterFinished.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
 
-	// mappings populate fields of the emitted Task from the webhook payload.
+	// mappings populate fields of the created Task from the webhook payload.
 	// +optional
 	Mappings []FieldMapping `json:"mappings,omitempty"`
 }
 
-// ClusterTriggerClassSpec wires an HTTP path on the webhook adapter to a
-// Task template. The adapter validates the signature, applies filters,
-// then creates a Task using the template plus payload mappings.
+// ClusterTriggerClassSpec connects an HTTP path on the webhook adapter to a
+// Task template. The adapter validates the signature, applies the filters,
+// and then creates a Task from the template and the payload mappings.
 type ClusterTriggerClassSpec struct {
-	// path is the HTTP path the adapter listens on, e.g. "/linear" or "/github".
+	// path is the HTTP path on which the adapter listens, for example "/linear"
+	// or "/github".
 	// +required
 	Path string `json:"path"`
 
-	// signature declares how to verify the inbound webhook.
+	// signature declares how the adapter verifies the inbound webhook.
 	// +required
 	Signature WebhookSignature `json:"signature"`
 
-	// filters are ANDed; the webhook is dropped if any fails.
-	// Typical use: filter GitHub "issues" events to "labeled" action with
-	// a specific label, or Linear updates to a specific stateId.
+	// filters are the conditions that an event must all satisfy. The adapter
+	// drops the webhook when one filter fails. A typical use filters GitHub
+	// "issues" events to the "labeled" action with a specific label, or Linear
+	// updates to a specific stateId.
 	// +optional
 	Filters []WebhookFilter `json:"filters,omitempty"`
 
-	// task is the Task template the adapter materializes.
+	// task is the Task template from which the adapter creates each Task.
 	// +required
 	Task TaskTemplate `json:"task"`
 }
 
-// ClusterTriggerClassStatus is intentionally minimal — this is a config
-// resource consumed by the adapter, not a reconciled one.
+// ClusterTriggerClassStatus is minimal by design. The adapter reads a
+// ClusterTriggerClass as configuration, and no controller reconciles it.
 type ClusterTriggerClassStatus struct {
 	// +optional
 	// +listType=map
