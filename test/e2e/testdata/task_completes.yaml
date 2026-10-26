@@ -25,6 +25,8 @@ spec:
     ref: e2e-busybox
   prompt:
     inline: hello from the e2e suite
+  # Task GC (#21): the Task deletes itself a minute after it finishes.
+  ttlSecondsAfterFinished: 60
   resources:
     cpu: 100m
     memory: 64Mi

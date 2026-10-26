@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **API/Controller:** Task garbage collection (#21). `spec.ttlSecondsAfterFinished`
+  on `Task` (and on the `ClusterTriggerClass` Task template) deletes a
+  terminal Task, with everything it owns, that many seconds after it reaches
+  Completed, Failed or TimedOut, same semantics as the Job field. The new
+  `--task-ttl-seconds` flag (Helm: `manager.taskTTLSeconds`) supplies a
+  cluster-wide default; a Task's own value wins. Unset at both levels keeps
+  today's behavior: Tasks are never deleted automatically. The example
+  trigger templates now set `86400`.
 - **Controller:** the finished-Job TTL (`Job.spec.ttlSecondsAfterFinished`)
   is the new `--job-ttl-seconds` flag instead of a compile-time constant;
   default unchanged at `3600`. The Helm chart exposes it as

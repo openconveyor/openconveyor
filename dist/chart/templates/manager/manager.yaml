@@ -45,6 +45,9 @@ spec:
         {{- end }}
         - --health-probe-bind-address=:8081
         - --job-ttl-seconds={{ .Values.manager.jobTTLSeconds }}
+        {{- if ne (toString .Values.manager.taskTTLSeconds) "" }}
+        - --task-ttl-seconds={{ .Values.manager.taskTTLSeconds }}
+        {{- end }}
         {{- range .Values.manager.args }}
         - {{ . }}
         {{- end }}

@@ -38,6 +38,9 @@ spec:
       egress:
         - api.github.com
         - github.com
+    # Delete the Task a day after it finishes so webhook-driven Tasks
+    # do not accumulate (Task GC, same semantics as the Job field).
+    ttlSecondsAfterFinished: 86400
     resources:
       cpu: "1"
       memory: 1Gi

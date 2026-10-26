@@ -80,6 +80,13 @@ from a small closed enum (`AgentClassMissing`, `InvalidSpec`,
 `EgressResolveFailed`, …). Triggers should watch conditions, not
 scrape phase strings.
 
+A terminal Task is never reconciled into a Job again. If it carries
+`spec.ttlSecondsAfterFinished`, or the controller runs with
+`--task-ttl-seconds`, the reconciler requeues until finish time plus
+TTL and then deletes the Task; the owned resources follow through their
+controller references. Without a TTL at either level the Task stays
+until someone deletes it.
+
 For humans, the same transitions are published as Kubernetes Events
 on the Task (`events.k8s.io/v1`, reporting controller `conveyor`), so
 `kubectl describe task <name>` shows the history: one `Normal` Event

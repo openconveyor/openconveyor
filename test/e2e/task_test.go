@@ -147,6 +147,17 @@ func taskSpecs() {
 			reasons = append(reasons, e.Reason)
 		}
 		Expect(reasons).To(ContainElements("Pending", "Completed"))
+
+		By("waiting for the Task to garbage-collect itself after ttlSecondsAfterFinished")
+		Eventually(func() error {
+			_, err := utils.Run(exec.Command("kubectl", "get", "task", taskName, "-n", taskNamespace))
+			if err == nil {
+				return fmt.Errorf("task %s still exists", taskName)
+			}
+			return nil
+		}, 3*time.Minute).Should(Succeed())
+		Expect(kubectlGet(&jobs, "job", "-n", taskNamespace, "-l", selector)).To(Succeed())
+		Expect(jobs.Items).To(BeEmpty(), "owned Job must be garbage-collected with the Task")
 	})
 
 	It("fails a Task with no egress whose agent attempts an outbound connection", func() {

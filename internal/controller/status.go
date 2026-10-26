@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -220,6 +221,35 @@ func (r *TaskReconciler) markWaitingForAgentClass(ctx context.Context, task *con
 	// actionable, hence Warning rather than Normal.
 	r.recordEvent(task, corev1.EventTypeWarning, reasonAgentClassMissing, msg)
 	return r.Status().Update(ctx, task)
+}
+
+// deletionDeadline returns when a terminal Task becomes eligible for
+// garbage collection: its finish time plus spec.ttlSecondsAfterFinished,
+// or plus defaultTTL when the spec leaves it unset. The finish time is
+// status.completionTime (set from the Job) or, for Tasks that never ran
+// a Job or whose Job reported none, the Ready condition's last
+// transition. ok is false when there is no TTL or no usable timestamp.
+func deletionDeadline(task *conveyorv1alpha1.Task, defaultTTL *int32) (time.Time, bool) {
+	ttl := task.Spec.TTLSecondsAfterFinished
+	if ttl == nil {
+		ttl = defaultTTL
+	}
+	if ttl == nil {
+		return time.Time{}, false
+	}
+	var finished *metav1.Time
+	switch {
+	case task.Status.CompletionTime != nil:
+		finished = task.Status.CompletionTime
+	default:
+		if c := meta.FindStatusCondition(task.Status.Conditions, conditionReady); c != nil && !c.LastTransitionTime.IsZero() {
+			finished = &c.LastTransitionTime
+		}
+	}
+	if finished == nil {
+		return time.Time{}, false
+	}
+	return finished.Add(time.Duration(*ttl) * time.Second), true
 }
 
 // equalStatus reports whether two statuses are semantically equal,
