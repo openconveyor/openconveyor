@@ -149,20 +149,14 @@ type ClusterTriggerClassSpec struct {
 	Task TaskTemplate `json:"task"`
 }
 
-// ClusterTriggerClassStatus is minimal by design. The adapter reads a
-// ClusterTriggerClass as configuration, and no controller reconciles it.
-type ClusterTriggerClassStatus struct {
-	// +optional
-	// +listType=map
-	// +listMapKey=type
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-}
-
 // +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="Path",type=string,JSONPath=`.spec.path`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// ClusterTriggerClass is the Schema for the clustertriggerclasses API
+// ClusterTriggerClass is the Schema for the clustertriggerclasses API. The
+// adapter reads a ClusterTriggerClass as configuration, and no controller
+// reconciles it, so the type has no status.
 type ClusterTriggerClass struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -173,10 +167,6 @@ type ClusterTriggerClass struct {
 	// spec defines the desired state of ClusterTriggerClass
 	// +required
 	Spec ClusterTriggerClassSpec `json:"spec"`
-
-	// status defines the observed state of ClusterTriggerClass
-	// +optional
-	Status ClusterTriggerClassStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true

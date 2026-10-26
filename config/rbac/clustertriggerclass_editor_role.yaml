@@ -25,9 +25,3 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - openconveyor.ai
-  resources:
-  - clustertriggerclasses/status
-  verbs:
-  - get

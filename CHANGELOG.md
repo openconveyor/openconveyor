@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **API:** `kubectl get clusteragentclasses` shows an `Image` column
+  (`.spec.image`) and `kubectl get clustertriggerclasses` shows a `Path`
+  column (`.spec.path`), before `Age`. (#18)
 - **Docs:** `docs/status-reference.md` lists every Task phase, the `Ready`
   condition's closed reason set with status and message, the other status
   fields, the Events that mirror them and how to consume them; linked from
@@ -111,6 +114,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (default `kindest/node:v1.36.4`, bumped with the k8s deps), so local and
   CI runs test the same Kubernetes version; CI moves to kind v0.33.0.
   (#37)
+
+### Removed
+
+- **API:** `ClusterAgentClass` and `ClusterTriggerClass` no longer have a
+  `.status` field or a status subresource. No component ever wrote them, and
+  the API is still `v1alpha1`. The Go types `ClusterAgentClassStatus` and
+  `ClusterTriggerClassStatus` do not exist, and the helper ClusterRoles no longer
+  grant `clusteragentclasses/status` or `clustertriggerclasses/status`. A
+  client that reads `.status` on these objects now gets no field. (#18)
 
 ### Fixed
 
