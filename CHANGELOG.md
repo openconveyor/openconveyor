@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Docs:** `docs/status-reference.md` lists every Task phase, the `Ready`
+  condition's closed reason set with status and message, the other status
+  fields, the Events that mirror them and how to consume them; linked from
+  `docs/architecture.md` and the README. (#31)
 - **CI/Supply chain:** release images carry an SBOM next to the existing
   provenance attestation and are signed keyless with cosign against the
   release workflow's OIDC identity; `docs/security-model.md` has the
@@ -104,6 +108,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Docs:** small fixes from #31: the README example table lists all five
+  examples and the Go Report badge points at goreportcard.com instead of a
+  `pending` placeholder; `examples/README.md` no longer says "all three
+  examples" and names which AgentClass each example uses; the CronJob
+  reporter README creates `anthropic-api-key` with key `key` like the
+  other examples.
 - **Docs:** the README quick start now works end to end (#29). It creates
   the `conveyor-tasks` namespace and the two Secrets the sample Task mounts
   (ported from `examples/README.md`), the sample Task sets

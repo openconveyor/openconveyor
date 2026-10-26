@@ -31,7 +31,7 @@ CronJob (Monday 09:00)
 3. Secrets are created in the `conveyor-tasks` namespace:
    ```sh
    kubectl -n conveyor-tasks create secret generic anthropic-api-key \
-     --from-literal=token="$ANTHROPIC_API_KEY"
+     --from-literal=key="$ANTHROPIC_API_KEY"
    kubectl -n conveyor-tasks create secret generic github-token \
      --from-literal=token="$GITHUB_TOKEN"
    ```

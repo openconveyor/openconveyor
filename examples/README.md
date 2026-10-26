@@ -24,14 +24,21 @@ Every example assumes:
    kubectl create namespace conveyor-tasks
    ```
 
-3. **The implementer AgentClass is applied.** One cluster-scoped
-   resource, used by all three examples:
+3. **The AgentClass for the example is applied.** Cluster-scoped, one
+   per archetype: the Linear, GitHub Issues and slash-command examples
+   use the implementer, the PR example the reviewer, the CronJob example
+   the reporter.
 
    ```bash
-   kubectl apply -f ../../config/samples/conveyor_v1alpha1_clusteragentclass.yaml
+   kubectl apply -f ../../config/samples/conveyor_v1alpha1_clusteragentclass.yaml           # implementer
+   kubectl apply -f ../../config/samples/conveyor_v1alpha1_clusteragentclass_reviewer.yaml  # reviewer
+   kubectl apply -f ../../config/samples/conveyor_v1alpha1_clusteragentclass_reporter.yaml  # reporter
    ```
 
-4. **Runtime secrets exist in `conveyor-tasks`.** Adjust per example:
+4. **Runtime secrets exist in `conveyor-tasks`.** Adjust per example.
+   The key name inside each Secret does not matter to the reference
+   agents (they export the file under the Secret's name, e.g.
+   `ANTHROPIC_API_KEY`), but the examples all use these:
 
    ```bash
    kubectl -n conveyor-tasks create secret generic anthropic-api-key \
