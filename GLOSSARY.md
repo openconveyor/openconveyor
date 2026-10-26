@@ -24,6 +24,10 @@ _Avoid_: bot, worker, runner
 A cluster-scoped description of an Agent: its image and the inputs that it accepts. It also gives the baseline permissions that every Task with this class has.
 _Avoid_: agent template, agent profile
 
+**Reference agent**:
+One of the three agent images that this repo ships: the implementer, the reviewer and the reporter. Each one is a worked example of the agent contract, not the only agent that can run.
+_Avoid_: built-in agent, official agent
+
 **Trigger**:
 Anything that creates a Task. Triggers are outside the controller and call only the Kubernetes API.
 _Avoid_: source, integration, hook
