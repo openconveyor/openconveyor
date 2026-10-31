@@ -32,6 +32,10 @@ _Avoid_: built-in agent, official agent
 The reference agent that turns a request into a specified issue on the git host. It reads the repository and writes no code.
 _Avoid_: intake, scribe, triager, specifier
 
+**Iteration**:
+A Task that updates an existing pull request in response to review comments. It pushes to the branch of that pull request and never opens a second one.
+_Avoid_: follow-up, fix-up run, round two
+
 **Trigger**:
 Anything that creates a Task. Triggers are outside the controller and call only the Kubernetes API.
 _Avoid_: source, integration, hook
