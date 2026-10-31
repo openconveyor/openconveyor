@@ -94,6 +94,9 @@ reconciler complain.
   signature receives a 202 (accepted, filtered). This is intentional:
   the attacker already proved that they have the secret, so the
   signature and the filter together are the gate.
+- Each delivery created one Task until ADR-0009 added best-effort
+  dedupe by `spec.dedupe.uniqueBy` labels. The label gate stays the
+  primary guard.
 
 ## References
 
