@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Agents:** implementer v2 (#119). Claude no longer opens PRs itself; the
+  entrypoint owns the branch, commit, push and PR. The prompt tells Claude to
+  leave the tree uncommitted and `--disallowedTools` blocks `git commit`,
+  `git push` and `gh`. Implement mode (`ISSUE_NUMBER`, new) reads the issue
+  with `gh`, pushes `conveyor/issue-<n>` (reusing an open PR of that branch),
+  opens the PR with `Closes #<n>` and a footer, comments on the issue, and
+  labels the PR `conveyor:review`; the commit subject, PR title and body come
+  from a second short `claude --print` call. Iterate mode (`PR_NUMBER`, new)
+  checks out the PR, addresses the unresolved review threads and new
+  comments, pushes to the same branch, replies "Addressed in <sha>" on each
+  addressed thread, and moves the `conveyor:iterate`/`conveyor:review`
+  labels. An empty diff or a failed Claude run now fails the Task. An empty
+  repository gets its base branch with an empty first commit. Results carry
+  the `pull-request` and `issue` links.
+
 - **Security:** the egress allowlist now opens **port 443 only** (TCP and
   UDP) on the resolved CIDRs instead of every port. A Task whose agent
   talks to an allowlisted host on another port (SSH to `github.com`, a

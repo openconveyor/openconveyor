@@ -242,7 +242,7 @@ tag as the controller image.
 
 | Archetype | Image | What it does | Side effect on the git host |
 |---|---|---|---|
-| Implementer | `ghcr.io/openconveyor/agent-claude-implementer` | Clones a repo, sends the prompt to `claude`, commits the diff, and opens a PR. Without a repo, it answers the prompt and exits. Result: a summary and the `pull-request` link. | `git push` and `gh pr create` |
+| Implementer | `ghcr.io/openconveyor/agent-claude-implementer` | Two modes. **Implement** (no `PR_NUMBER`): reads the issue with `gh`, lets `claude` edit the working tree, then commits, pushes `conveyor/issue-<n>` and opens a PR with `Closes #<n>`. It reuses an open PR of that branch. **Iterate** (`PR_NUMBER` set): checks out the PR and sends the unresolved review threads and the new comments to `claude`. Then it pushes to the same branch and replies on each thread that it addressed. Without a repo, it answers the prompt and exits. Result: a summary, and the `pull-request` and `issue` links. | `git push`, `gh pr create`, PR and issue comments, thread replies, the `conveyor:review` and `conveyor:iterate` labels |
 | Reviewer | `ghcr.io/openconveyor/agent-claude-reviewer` | Reads the PR diff with `gh pr diff`, sends the prompt and the diff to `claude`, and posts the review. Result: the review event and the first line of the review, and the `pull-request` link. | `gh pr review` only |
 | Reporter | `ghcr.io/openconveyor/agent-claude-reporter` | Lists PRs and issues with `gh`, sends the prompt and the data to `claude`, and posts the report as a GitHub Issue comment. Result: the first line of the report, and the `issue` link when the Task sets `REPORT_ISSUE_URL`. | `gh issue comment` only |
 
@@ -275,12 +275,27 @@ a default with `ENV`.
 | `GITHUB_TOKEN_FILE` | Config | Implementer | A file path. The entrypoint reads the token from this file only when `GITHUB_TOKEN` is empty. |
 | `GIT_HOST` | Image (`github`), Config | Implementer, Reviewer | The git host. Only `github` is valid. Any other value is an error. |
 | `TARGET_REPO` | Config | Implementer, Reporter | Implementer: the git URL to clone, for example `https://github.com/your-org/your-repo.git`. Reporter: the `owner/name` form for `gh`. Without it, the implementer answers the prompt only, and the reporter sends the prompt without repo data. |
-| `TARGET_BRANCH` | Config | Implementer | The branch to clone and the base of the PR. The default is `main`. |
-| `BRANCH_NAME` | Config | Implementer | The name of the branch that the agent pushes. The default is `conveyor/<timestamp>`. |
+| `TARGET_BRANCH` | Config | Implementer | The branch to clone and the base of the PR. The default is `main`. In an empty repository, the implementer creates this branch with an empty first commit. |
+| `ISSUE_NUMBER` | Config | Implementer | Implement mode: the issue to implement. The entrypoint reads its title, body, labels and comments with `gh`, names the branch `conveyor/issue-<n>`, and writes `Closes #<n>` into the PR. Without it, a prompt that is only an issue URL gives the number. |
+| `PR_NUMBER` | Config | Implementer | Selects iterate mode: the PR to update after a review. Without it, a prompt that is only a PR URL gives the number. |
+| `BRANCH_NAME` | Config | Implementer | Implement mode without an issue: the name of the branch that the agent pushes. The default is `conveyor/<timestamp>`. |
 | `PR_URL` | Config | Reviewer | The PR to review. Without it, the entrypoint takes the first `https://<host>/<owner>/<repo>/pull/<n>` URL in the prompt. |
 | `REVIEW_EVENT` | Config | Reviewer | `COMMENT` (the default), `APPROVE` or `REQUEST_CHANGES`. |
 | `REPORT_ISSUE_URL` | Config | Reporter | The GitHub Issue that receives the report as a comment. Without it, the report goes to stdout only. |
 | `PROMPT_FILE`, `SECRETS_ROOT`, `WORKDIR`, `RESULT_FILE`, `CONVEYOR_LIB` | Config | All three | Replace the defaults `/task/prompt`, `/run/secrets`, `/tmp/work`, `/dev/termination-log` and `/usr/local/lib/conveyor/lib.sh`. Set them only for a local test of the script. `make test-agents` runs the entrypoints this way with a fake `gh` and `claude`. |
+
+The implementer entrypoint owns every git and git-host step. The
+prompt tells Claude to leave the changes uncommitted, and
+`--disallowedTools` blocks `git commit`, `git push` and `gh` for Claude.
+When Claude commits anyway, the entrypoint folds the commits back into
+the working tree.
+
+A second, short `claude --print` call turns the diff into a
+Conventional Commit subject, a PR title and a PR body. Without a
+usable answer, the entrypoint uses a fixed text. An empty diff or a
+failed Claude run fails the Task, and the Result says why. The
+`conveyor:review` and `conveyor:iterate` labels must exist on the
+repository.
 
 The reference trigger for GitHub Issues maps `repository.clone_url` to
 `config.TARGET_REPO` and `repository.default_branch` to
