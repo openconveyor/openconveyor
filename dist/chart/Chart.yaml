@@ -5,8 +5,8 @@ type: application
 
 # version/appVersion are overridden at release time by
 # `helm package --version X.Y.Z --app-version vX.Y.Z` in release.yml.
-version: 0.2.1
-appVersion: "v0.2.1"
+version: 0.4.0
+appVersion: "v0.4.0"
 
 keywords:
   - kubernetes

@@ -201,7 +201,7 @@ identity. `govulncheck` runs on each PR.
 Verify an image before you deploy it:
 
 ```sh
-IMAGE=ghcr.io/openconveyor/conveyor:v0.3.0
+IMAGE=ghcr.io/openconveyor/conveyor:v0.4.0
 
 # Signature: issued to this repo's release workflow for a v* tag.
 cosign verify "$IMAGE" \
