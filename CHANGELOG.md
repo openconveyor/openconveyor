@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agents:** shared shell library `agents/common/lib.sh` (#118), copied into
+  each reference image (build context is now `agents/`; no shared base
+  image): secrets export, `GH_TOKEN` and git credential setup, `TARGET_REPO`
+  → `GH_REPO`, `result_write` for the ADR-0008 Result file, and SIGTERM/EXIT
+  traps that write a partial Result. The reviewer reports the review verdict
+  and the `pull-request` link; the reporter reports the first line of the
+  report and the `issue` link. Images set `GH_PROMPT_DISABLED=1` and
+  `NO_COLOR=1`. `make test-agents` runs shellcheck and the entrypoint tests
+  (fake `gh`/`claude`), also in the `Agent Images` workflow.
 - **API/Trigger:** webhook dedupe by label (ADR-0009, #117).
   `ClusterTriggerClass.spec.dedupe.uniqueBy` lists 1–4 label keys that the
   mappings set (for example `openconveyor.ai/issue-number`). Before it creates a

@@ -84,6 +84,14 @@ Use the conventional link names `issue` and `pull-request` where they
 fit, so that triggers and bots can read them without agent-specific
 code. You can add other names.
 
+The shared shell library of the reference agents,
+[`agents/common/lib.sh`](../agents/common/lib.sh), is the worked
+example of this contract. `result_write <summary> [name=url ...]`
+writes the file. It removes control characters, drops a link that
+breaks the rules, and keeps the file under 2048 bytes.
+`result_partial` records what the agent has so far. A trap writes it
+on SIGTERM and on an unexpected failure.
+
 Write the file on success and on failure: the controller reads it
 for both, and a Result never changes the phase. On a timeout,
 Kubernetes sends SIGTERM and waits 30 seconds. An agent that traps
@@ -206,6 +214,15 @@ pattern. An image for OpenConveyor does these things:
 - Copy the entrypoint, set `USER 65532:65532` and `ENV HOME=/tmp`.
 - Set the `ENTRYPOINT` to the script that reads the prompt and exits.
 
+The reference images copy the shared library
+[`agents/common/lib.sh`](../agents/common/lib.sh) to
+`/usr/local/lib/conveyor/lib.sh`. There is no shared base image, so the
+build context is `agents/`:
+
+```sh
+docker build -f agents/claude-code-implementer/Dockerfile agents/
+```
+
 The entrypoint of a reference agent exports each Secret as a variable
 before it calls the tools. It converts the Secret name to upper case
 and replaces `-` with `_`: `anthropic-api-key` becomes
@@ -225,9 +242,9 @@ tag as the controller image.
 
 | Archetype | Image | What it does | Side effect on the git host |
 |---|---|---|---|
-| Implementer | `ghcr.io/openconveyor/agent-claude-implementer` | Clones a repo, sends the prompt to `claude`, commits the diff, and opens a PR. Without a repo, it answers the prompt and exits. | `git push` and `gh pr create` |
-| Reviewer | `ghcr.io/openconveyor/agent-claude-reviewer` | Reads the PR diff with `gh pr diff`, sends the prompt and the diff to `claude`, and posts the review. | `gh pr review` only |
-| Reporter | `ghcr.io/openconveyor/agent-claude-reporter` | Lists PRs and issues with `gh`, sends the prompt and the data to `claude`, and posts the report as a GitHub Issue comment. | `gh issue comment` only |
+| Implementer | `ghcr.io/openconveyor/agent-claude-implementer` | Clones a repo, sends the prompt to `claude`, commits the diff, and opens a PR. Without a repo, it answers the prompt and exits. Result: a summary and the `pull-request` link. | `git push` and `gh pr create` |
+| Reviewer | `ghcr.io/openconveyor/agent-claude-reviewer` | Reads the PR diff with `gh pr diff`, sends the prompt and the diff to `claude`, and posts the review. Result: the review event and the first line of the review, and the `pull-request` link. | `gh pr review` only |
+| Reporter | `ghcr.io/openconveyor/agent-claude-reporter` | Lists PRs and issues with `gh`, sends the prompt and the data to `claude`, and posts the report as a GitHub Issue comment. Result: the first line of the report, and the `issue` link when the Task sets `REPORT_ISSUE_URL`. | `gh issue comment` only |
 
 The classes for the three archetypes are in
 [`config/samples/`](../config/samples/). All three declare
@@ -252,7 +269,9 @@ a default with `ENV`.
 | Variable | Origin | Agents | Meaning |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Secret `anthropic-api-key` | All three | The `claude` CLI reads it. The entrypoint exports it and does not read it. |
-| `GITHUB_TOKEN` | Secret `github-token` | All three | `gh` reads it. The implementer also stores it in the `git` credential helper for `git push`. The reviewer, and the reporter with a `TARGET_REPO`, exit with an error when it is empty. |
+| `GITHUB_TOKEN` | Secret `github-token` | All three | The library copies it to `GH_TOKEN`, which `gh` reads first, and stores it in the `git` credential helper for `git push`. The reviewer, and the reporter with a `TARGET_REPO`, exit with an error when it is empty. |
+| `GH_REPO` | Library | Implementer, Reporter | The `owner/name` form of `TARGET_REPO`, so that `gh` works outside a clone. An explicit value wins. |
+| `GH_PROMPT_DISABLED`, `NO_COLOR` | Image (`1`) | All three | `gh` never prompts and prints no color codes into the logs. |
 | `GITHUB_TOKEN_FILE` | Config | Implementer | A file path. The entrypoint reads the token from this file only when `GITHUB_TOKEN` is empty. |
 | `GIT_HOST` | Image (`github`), Config | Implementer, Reviewer | The git host. Only `github` is valid. Any other value is an error. |
 | `TARGET_REPO` | Config | Implementer, Reporter | Implementer: the git URL to clone, for example `https://github.com/your-org/your-repo.git`. Reporter: the `owner/name` form for `gh`. Without it, the implementer answers the prompt only, and the reporter sends the prompt without repo data. |
@@ -261,7 +280,7 @@ a default with `ENV`.
 | `PR_URL` | Config | Reviewer | The PR to review. Without it, the entrypoint takes the first `https://<host>/<owner>/<repo>/pull/<n>` URL in the prompt. |
 | `REVIEW_EVENT` | Config | Reviewer | `COMMENT` (the default), `APPROVE` or `REQUEST_CHANGES`. |
 | `REPORT_ISSUE_URL` | Config | Reporter | The GitHub Issue that receives the report as a comment. Without it, the report goes to stdout only. |
-| `PROMPT_FILE`, `SECRETS_ROOT`, `WORKDIR` | Config | All three | Replace the defaults `/task/prompt`, `/run/secrets` and `/tmp/work`. Set them only for a local test of the script. |
+| `PROMPT_FILE`, `SECRETS_ROOT`, `WORKDIR`, `RESULT_FILE`, `CONVEYOR_LIB` | Config | All three | Replace the defaults `/task/prompt`, `/run/secrets`, `/tmp/work`, `/dev/termination-log` and `/usr/local/lib/conveyor/lib.sh`. Set them only for a local test of the script. `make test-agents` runs the entrypoints this way with a fake `gh` and `claude`. |
 
 The reference trigger for GitHub Issues maps `repository.clone_url` to
 `config.TARGET_REPO` and `repository.default_branch` to
