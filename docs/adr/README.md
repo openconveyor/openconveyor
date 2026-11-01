@@ -60,3 +60,5 @@ minutes.
 | [0005](0005-default-deny-with-empty-egress.md) | Empty `permissions.egress` means deny-all — no implicit DNS | Accepted |
 | [0006](0006-webhook-adapter-trust-boundary.md) | Webhook adapter trust boundary — HMAC, capped body, namespace-local secrets | Accepted |
 | [0007](0007-simplified-technical-english.md) | Write all prose in Simplified Technical English | Accepted |
+| [0008](0008-task-result-through-termination-message.md) | Agents report a Result through the container termination message | Accepted |
+| [0009](0009-dedupe-webhook-tasks-by-label.md) | Dedupe webhook Tasks by label, not by name | Accepted |

@@ -16,6 +16,10 @@ _Avoid_: finished Task, done Task, dead Task
 One of the four security defaults that every Task has without an opt-in. The four are default-deny egress, no RBAC, secrets as files, and a mandatory hard timeout. A guarantee is never a setting.
 _Avoid_: feature, default setting, option
 
+**Result**:
+The small, structured outcome that an Agent reports when it exits: a summary and named links. The controller validates it and stores it on the Task. It never changes the Task phase.
+_Avoid_: output, artifact, outcome
+
 **Agent**:
 A container image that reads a prompt and does the work. It knows nothing about OpenConveyor except the file contract that OpenConveyor starts it with.
 _Avoid_: bot, worker, runner
