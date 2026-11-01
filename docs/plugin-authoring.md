@@ -325,13 +325,17 @@ this order:
 3. It reads the signing Secret and verifies the HMAC of the body.
 4. It applies the filters. A filter that does not match ends the
    request with no Task.
-5. It builds the Task from the template and the mappings, and creates
-   it with the Kubernetes API.
+5. It builds the Task from the template and the mappings. It adds the
+   label `openconveyor.ai/trigger-class=<class name>`.
+6. When the class sets `spec.dedupe`, it looks for an active Task of
+   the same class with the same `uniqueBy` labels. When it finds one,
+   it creates nothing. See [Dedupe](#dedupe).
+7. It creates the Task with the Kubernetes API.
 
 | Status | Meaning |
 |---|---|
 | `200` | The adapter created a Task. The body names it. |
-| `202` | The signature is valid, but a filter did not match. No Task. |
+| `202` | The signature is valid, but a filter did not match (`{"filtered": true}`), or an active Task for the same subject exists (`{"duplicate": true, "task": "<name>"}`). No Task. |
 | `400` | The body is not JSON, or the mappings produced a Task without a prompt. |
 | `401` | The signature header is missing or does not match. |
 | `404` | No `ClusterTriggerClass` has this path. |
@@ -444,6 +448,48 @@ instructions in the issue body or the PR body and map that field to
 `prompt`. A `config.<key>` mapping replaces a value with the same key
 in the template `agent.config`.
 
+#### Dedupe
+
+GitHub sends one event for each label change, and it can redeliver an
+event. Without dedupe, each delivery creates a Task, so one issue can
+run two agents at the same time.
+[ADR-0009](adr/0009-dedupe-webhook-tasks-by-label.md) records the rule:
+
+```yaml
+spec:
+  dedupe:
+    uniqueBy:
+      - openconveyor.ai/issue-number
+  task:
+    mappings:
+      - from: issue.number
+        to: labels.openconveyor.ai/issue-number
+```
+
+`uniqueBy` lists one to four label keys. The mappings of the template
+must set these labels. Before the adapter creates a Task, it lists the
+Tasks in the target namespace with the same
+`openconveyor.ai/trigger-class` label and the same values for all
+keys. It reads from the API server, not from a cache.
+
+- A Task that is not terminal blocks the event. An empty phase counts
+  as active. The adapter answers `202 {"duplicate": true, "task":
+  "<name>"}` and counts the metric result `duplicate`.
+- A terminal Task never blocks. Remove and add the label again to
+  start a new run after a run ends.
+- Sometimes a `uniqueBy` label is missing on the built Task, for
+  example when the payload has no issue number. Then the adapter skips
+  the check and creates the Task.
+- Two classes never block each other, because the check includes the
+  class label.
+
+The check is best effort. Two deliveries in one API round trip can
+both create a Task. The label filter stays the primary guard against
+unwanted runs. A class that serves more than one repository can join
+two issues with the same number, so use one class for each repository.
+A class with `spec.dedupe` must have a name of at most 63 characters,
+because the name becomes a label value.
+
 #### Task template
 
 `spec.task` is the prototype of every Task that the class creates.
@@ -451,7 +497,7 @@ in the template `agent.config`.
 | Field | Required | Meaning |
 |---|---|---|
 | `namespace` | No | The namespace of the Tasks. The default is the namespace of the adapter. |
-| `generateNamePrefix` | No | The prefix of the generated Task name. The default is `task-`. A `name` mapping replaces the whole name. |
+| `generateNamePrefix` | No | The prefix of the generated Task name. The API server adds a random suffix. The default is `task-`. A `name` mapping replaces the whole name. |
 | `agent` | Yes | The `ref` and the optional `config`, copied into each Task. |
 | `permissions` | No | `secrets`, `egress`, `egressPorts` and `rbac`, copied into each Task. |
 | `resources` | Yes | `cpu`, `memory` and the mandatory `timeout`, copied into each Task. |

@@ -223,6 +223,7 @@ func setupTrigger(mgr ctrl.Manager, fl flags) error {
 		Log:  ctrl.Log.WithName("trigger"),
 		Handler: &trigger.Handler{
 			Client:               mgr.GetClient(),
+			Reader:               mgr.GetAPIReader(),
 			SecretNamespace:      ns,
 			DefaultTaskNamespace: ns,
 			Log:                  ctrl.Log.WithName("trigger"),

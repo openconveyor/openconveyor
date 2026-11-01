@@ -1101,6 +1101,70 @@ var _ = Describe("Task Controller", func() {
 				"spec.requires.egress"),
 		)
 
+		// validTriggerClass is the smallest ClusterTriggerClass that the
+		// API server accepts, with dedupe on the issue-number label.
+		validTriggerClass := func(name string) *conveyorv1alpha1.ClusterTriggerClass {
+			return &conveyorv1alpha1.ClusterTriggerClass{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: conveyorv1alpha1.ClusterTriggerClassSpec{
+					Path: "/github",
+					Signature: conveyorv1alpha1.WebhookSignature{
+						Header: "X-Hub-Signature-256",
+						SecretRef: corev1.SecretKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{Name: "github-webhook"},
+							Key:                  "secret",
+						},
+					},
+					Task: conveyorv1alpha1.TaskTemplate{
+						Agent:     conveyorv1alpha1.AgentRef{Ref: "hello"},
+						Resources: conveyorv1alpha1.TaskResources{Timeout: metav1.Duration{Duration: time.Minute}},
+					},
+					Dedupe: &conveyorv1alpha1.TriggerDedupe{UniqueBy: []string{"openconveyor.ai/issue-number"}},
+				},
+			}
+		}
+
+		It("accepts a ClusterTriggerClass with dedupe on valid label keys", func() {
+			ctc := validTriggerClass("dedupe-ok")
+			ctc.Spec.Dedupe.UniqueBy = append(ctc.Spec.Dedupe.UniqueBy, "repo")
+			Expect(k8sClient.Create(ctx, ctc)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, ctc) })
+		})
+
+		DescribeTable("rejects invalid dedupe settings at admission",
+			func(mutate func(*conveyorv1alpha1.ClusterTriggerClass), wantSubstring string) {
+				ctc := validTriggerClass("dedupe-invalid")
+				mutate(ctc)
+				err := k8sClient.Create(ctx, ctc)
+				if err == nil {
+					_ = k8sClient.Delete(ctx, ctc)
+				}
+				Expect(apierrors.IsInvalid(err)).To(BeTrue(), "expected an Invalid error, got: %v", err)
+				Expect(err.Error()).To(ContainSubstring(wantSubstring))
+			},
+			Entry("empty uniqueBy",
+				func(c *conveyorv1alpha1.ClusterTriggerClass) { c.Spec.Dedupe.UniqueBy = []string{} },
+				"spec.dedupe.uniqueBy"),
+			Entry("more than four keys",
+				func(c *conveyorv1alpha1.ClusterTriggerClass) {
+					c.Spec.Dedupe.UniqueBy = []string{"a", "b", "c", "d", "e"}
+				},
+				"spec.dedupe.uniqueBy"),
+			Entry("a key that is not a label key",
+				func(c *conveyorv1alpha1.ClusterTriggerClass) {
+					c.Spec.Dedupe.UniqueBy = []string{"issue number"}
+				},
+				"must be a valid label key"),
+			Entry("a duplicate key",
+				func(c *conveyorv1alpha1.ClusterTriggerClass) {
+					c.Spec.Dedupe.UniqueBy = []string{"a", "a"}
+				},
+				"spec.dedupe.uniqueBy"),
+			Entry("a class name that cannot be a label value",
+				func(c *conveyorv1alpha1.ClusterTriggerClass) { c.Name = strings.Repeat("a", 64) },
+				"at most 63 characters"),
+		)
+
 		It("keeps the Task Pending with a requeue when the referenced AgentClass does not exist", func() {
 			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withAgentRef("nope-missing")))).To(Succeed())
 
