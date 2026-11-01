@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **API/Trigger:** webhook dedupe by label (ADR-0009, #117).
+  `ClusterTriggerClass.spec.dedupe.uniqueBy` lists 1–4 label keys that the
+  mappings set (for example `openconveyor.ai/issue-number`). Before it creates a
+  Task, the adapter lists the Tasks of the same class with the same values
+  through a live API read; when one is not terminal it answers
+  `202 {"duplicate": true, "task": "<name>"}` with the metric result
+  `duplicate` and creates nothing. Terminal Tasks never block. Every
+  adapter-created Task now carries `openconveyor.ai/trigger-class=<class>`.
 - **API/Controller:** Task Result contract (ADR-0008, #116). An agent writes
   strict JSON (`summary`, up to 8 named `links`, at most 2048 bytes) to
   `/dev/termination-log`; the controller validates it as untrusted input and
