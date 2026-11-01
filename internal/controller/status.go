@@ -77,6 +77,12 @@ func (r *TaskReconciler) syncStatus(
 		return requeue, nil
 	}
 
+	// Write first, then report. A conflict on the write requeues the
+	// reconcile, and an Event or a metric before the write would then
+	// count the same transition twice.
+	if err := r.Status().Update(ctx, task); err != nil {
+		return 0, err
+	}
 	if before.Phase != phase {
 		log.Info("Task phase transitioned", "from", before.Phase, "to", phase, "reason", reason)
 		metrics.ObservePhaseTransition(string(phase), reason)
@@ -86,8 +92,7 @@ func (r *TaskReconciler) syncStatus(
 			metrics.ObserveTaskDuration(string(phase), dur)
 		}
 	}
-
-	return requeue, r.Status().Update(ctx, task)
+	return requeue, nil
 }
 
 // eventActionReconcile is the events.k8s.io/v1 `action` on every Event
@@ -196,11 +201,14 @@ func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1
 		Message:            msg,
 		ObservedGeneration: task.Generation,
 	})
+	if err := r.Status().Update(ctx, task); err != nil {
+		return err
+	}
 	if prevPhase != conveyorv1alpha1.TaskPhaseFailed {
 		metrics.ObservePhaseTransition(string(conveyorv1alpha1.TaskPhaseFailed), reason)
 		r.recordEvent(task, corev1.EventTypeWarning, reason, invalidEventMessage(reason, msg))
 	}
-	return r.Status().Update(ctx, task)
+	return nil
 }
 
 // invalidEventMessage prefixes an error string with a sentence that
@@ -234,10 +242,13 @@ func (r *TaskReconciler) markWaitingForAgentClass(ctx context.Context, task *con
 	if equalStatus(before, &task.Status) {
 		return nil
 	}
+	if err := r.Status().Update(ctx, task); err != nil {
+		return err
+	}
 	// A Task that cannot start until someone creates the class needs
 	// action, so the Event type is Warning rather than Normal.
 	r.recordEvent(task, corev1.EventTypeWarning, reasonAgentClassMissing, msg)
-	return r.Status().Update(ctx, task)
+	return nil
 }
 
 // deletionDeadline returns the time at which a terminal Task becomes

@@ -1178,6 +1178,40 @@ var _ = Describe("Task Controller", func() {
 			Expect(recordedEvents()).To(ConsistOf("Warning Failed Job failed"))
 		})
 
+		It("emits no Event when the status write conflicts, and one Event on the retry", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace))).To(Succeed())
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			_ = recordedEvents()
+
+			By("failing the Job")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Failed = 1
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+				batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+
+			By("writing the Task status from a stale copy")
+			var stale, fresh conveyorv1alpha1.Task
+			Expect(k8sClient.Get(ctx, taskKey, &stale)).To(Succeed())
+			Expect(k8sClient.Get(ctx, taskKey, &fresh)).To(Succeed())
+			fresh.Status.ObservedGeneration++
+			Expect(k8sClient.Status().Update(ctx, &fresh)).To(Succeed())
+			_, err = reconciler().syncStatus(ctx, &stale, &job, nil)
+			Expect(apierrors.IsConflict(err)).To(BeTrue(), "expected a conflict, got: %v", err)
+			Expect(recordedEvents()).To(BeEmpty(), "a failed write must not emit an Event")
+
+			By("retrying, as controller-runtime does after the conflict")
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(recordedEvents()).To(ConsistOf("Warning Failed Job failed"))
+		})
+
 		It("emits a Warning when the egress allowlist cannot be resolved", func() {
 			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("api.example.com")))).To(Succeed())
 			broken := reconciler()
