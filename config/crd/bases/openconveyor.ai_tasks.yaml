@@ -29,6 +29,10 @@ spec:
       name: Completed
       priority: 1
       type: date
+    - jsonPath: .status.result.summary
+      name: Summary
+      priority: 1
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -366,6 +370,51 @@ spec:
                 - Failed
                 - TimedOut
                 type: string
+              result:
+                description: |-
+                  result is the outcome that the agent reported through its container
+                  termination message (ADR-0008). The controller validates the message
+                  and copies only the accepted fields. The result never changes the
+                  phase. The "Result" condition tells why this field is empty.
+                properties:
+                  links:
+                    description: |-
+                      links is the list of URLs to what the agent made, each with a name,
+                      for example the pull request. The conventional names are "issue" and
+                      "pull-request". The controller keeps a link only when its URL uses
+                      https and its host is in the egress allowlist of the Task.
+                    items:
+                      description: ResultLink is one named URL in a TaskResult.
+                      properties:
+                        name:
+                          description: name identifies the link, in kebab-case, for
+                            example "pull-request".
+                          maxLength: 32
+                          minLength: 1
+                          pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
+                          type: string
+                        url:
+                          description: url is an https URL whose host is in the egress
+                            allowlist of the Task.
+                          maxLength: 2048
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - url
+                      type: object
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  summary:
+                    description: |-
+                      summary is one line of plain text about the outcome. The controller
+                      removes control characters and cuts the text to 512 characters.
+                    maxLength: 512
+                    type: string
+                type: object
               startTime:
                 description: startTime is the time at which the Job first started.
                 format: date-time
