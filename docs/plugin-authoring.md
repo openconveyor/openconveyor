@@ -236,9 +236,12 @@ rule of the controller. Your agent can read the files directly.
 
 A **reference agent** is one of the three agent images that this repo
 ships. Each one is a worked example of the agent contract, not the
-only agent that can run. Each image contains the Claude Code CLI, `git`
-and `gh`. The release workflow pushes them to `ghcr.io` with the same
-tag as the controller image.
+only agent that can run. Each image contains the Claude Code CLI, `git`,
+`gh`, Node.js (from the base image) and the shared library
+[`agents/common/lib.sh`](../agents/common/lib.sh). The release workflow
+pushes them to `ghcr.io` with the same tag as the controller image.
+Each one writes a [Result](#report-a-result) on success and on failure,
+so `Task.status.result` tells what it made or why it stopped.
 
 | Archetype | Image | What it does | Side effect on the git host |
 |---|---|---|---|
@@ -269,7 +272,7 @@ a default with `ENV`.
 | Variable | Origin | Agents | Meaning |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Secret `anthropic-api-key` | All three | The `claude` CLI reads it. The entrypoint exports it and does not read it. |
-| `GITHUB_TOKEN` | Secret `github-token` | All three | The library copies it to `GH_TOKEN`, which `gh` reads first, and stores it in the `git` credential helper for `git push`. The reviewer, and the reporter with a `TARGET_REPO`, exit with an error when it is empty. |
+| `GITHUB_TOKEN` | Secret `github-token` | All three | The library copies it to `GH_TOKEN`, which `gh` reads first, and stores it in the `git` credential helper for `git push`. The reviewer, and the implementer and the reporter with a `TARGET_REPO`, exit with an error when it is empty. |
 | `GH_REPO` | Library | Implementer, Reporter | The `owner/name` form of `TARGET_REPO`, so that `gh` works outside a clone. An explicit value wins. |
 | `GH_PROMPT_DISABLED`, `NO_COLOR` | Image (`1`) | All three | `gh` never prompts and prints no color codes into the logs. |
 | `GITHUB_TOKEN_FILE` | Config | Implementer | A file path. The entrypoint reads the token from this file only when `GITHUB_TOKEN` is empty. |

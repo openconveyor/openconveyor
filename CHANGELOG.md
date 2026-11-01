@@ -148,6 +148,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Docs:** `docs/phone-workflow.md` is now the tutorial for the GitHub flow
+  (#125): issue + `conveyor:ready` → PR with `Closes #N` and a review →
+  comments + `conveyor:iterate` → push to the same branch → merge, with the
+  `gh` equivalent of each tap and a troubleshooting table. Install details
+  moved to the `phone-workflow-stack` README; `README.md` and
+  `examples/README.md` list the stack, which replaces shared prerequisites
+  1–5. `plugin-authoring.md` and `GLOSSARY.md` name three reference agents
+  (the planner is not in v0.4.0).
 - **Docs:** `docs/plugin-authoring.md` is rewritten against the real
   `ClusterAgentClass`, `ClusterTriggerClass` and `Task` schemas: the
   `{from, to, default}` mapping list of the webhook adapter (no

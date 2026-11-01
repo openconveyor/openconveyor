@@ -1,11 +1,12 @@
 # Examples
 
-Six ways to start agents. They prove the trigger-pluggability thesis
+Six ways to start agents, and one stack that installs the GitHub flow. They prove the trigger-pluggability thesis
 of OpenConveyor. The reconciler, the AgentClass, and the Task shape are
 identical across the examples. Only the trigger differs.
 
 | Example | Trigger | What it shows |
 |---|---|---|
+| [`phone-workflow-stack/`](phone-workflow-stack/) | The three GitHub webhooks | One `make install` for the whole GitHub flow on kind ([tutorial](../docs/phone-workflow.md)) |
 | [`linear-claude-code/`](linear-claude-code/) | Linear webhook | SaaS issue tracker → Task |
 | [`github-issues-claude-code/`](github-issues-claude-code/) | GitHub Issues webhook | Git-host issue tracker → Task |
 | [`github-pr-claude-code/`](github-pr-claude-code/) | GitHub Pull Requests webhook | PR labeled → review comment (reviewer archetype) |
@@ -14,6 +15,10 @@ identical across the examples. Only the trigger differs.
 | [`cronjob-reporter/`](cronjob-reporter/) | Kubernetes CronJob | Scheduled Task dispatch (reporter archetype) |
 
 ## Shared prerequisites
+
+> [!NOTE]
+> Use the [`phone-workflow-stack`](phone-workflow-stack/) example to skip steps 1 to 5.
+> Its `make install` installs the controller with the trigger adapter, the namespace, the agent classes and the Secrets for the three GitHub examples.
 
 Every example assumes:
 
