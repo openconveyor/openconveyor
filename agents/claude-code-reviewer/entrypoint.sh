@@ -9,6 +9,8 @@
 #   - $PR_URL                     optional: an explicit PR URL override
 #   - $REVIEW_EVENT               optional: COMMENT (default) | APPROVE | REQUEST_CHANGES
 #   - exit 0 = success, non-zero = failure
+#   - /dev/termination-log        the Result (ADR-0008): the review verdict and
+#                                 the pull-request link
 #
 # This script never runs `git push` and never opens a PR. Its only side effect
 # on the git host is `gh pr review --comment`, which posts a review with a body.
@@ -17,26 +19,20 @@
 
 set -euo pipefail
 
-log() { printf '[reviewer] %s\n' "$*" >&2; }
-die() { log "error: $*"; exit 1; }
+AGENT_NAME=reviewer
+# The shared library: secrets export, GitHub setup, the Result writer and the
+# SIGTERM trap. The Dockerfile copies it from agents/common/lib.sh.
+# shellcheck source-path=SCRIPTDIR source=../common/lib.sh
+. "${CONVEYOR_LIB:-/usr/local/lib/conveyor/lib.sh}"
 
 PROMPT_FILE="${PROMPT_FILE:-/task/prompt}"
-SECRETS_ROOT="${SECRETS_ROOT:-/run/secrets}"
 WORKDIR="${WORKDIR:-/tmp/work}"
 REVIEW_EVENT="${REVIEW_EVENT:-COMMENT}"
 
 [[ -r "$PROMPT_FILE" ]] || die "prompt file $PROMPT_FILE not readable"
 
-# This loop mirrors the secret fan-out of the implementer: a Secret directory
-# becomes $NAME_UPPER=<contents-of-its-single-key>. Standard CLIs then find
-# what they expect (ANTHROPIC_API_KEY, GITHUB_TOKEN, and more).
-if [[ -d "$SECRETS_ROOT" ]]; then
-    while IFS= read -r -d '' file; do
-        name=$(basename "$(dirname "$file")")
-        var=$(printf '%s' "$name" | tr '[:lower:]-' '[:upper:]_')
-        export "$var=$(cat "$file")"
-    done < <(find -L "$SECRETS_ROOT" -mindepth 2 -maxdepth 2 -type f -print0 2>/dev/null || true)
-fi
+secrets_export
+github_setup
 
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
@@ -52,6 +48,7 @@ if [[ -z "$pr_url" ]]; then
         | head -n1 || true)
 fi
 [[ -n "$pr_url" ]] || die "no PR URL: set \$PR_URL or include one in the prompt"
+result_partial "Stopped before the review was posted" "pull-request=$pr_url"
 
 case "${GIT_HOST:-github}" in
     github) ;;
@@ -67,15 +64,18 @@ gh pr diff "$pr_url" > "$diff_file"
 # Send the prompt + diff to claude. The --print flag makes claude write the
 # review body to stdout and exit when it finishes. The script captures the body
 # in a file because `gh pr review --body-file` is the safe path for arbitrary
-# content. It avoids the shell escaping problems of --body.
+# content. It avoids the shell escaping problems of --body. The input goes
+# through a file, so that run_interruptible can pass it to the background job.
+input_file="$WORKDIR/input.md"
 review_file="$WORKDIR/review.md"
-log "running claude (review event: $REVIEW_EVENT)"
 {
     printf '%s\n\n' "$prompt"
     printf '## PR diff\n\n```diff\n'
     cat "$diff_file"
     printf '\n```\n'
-} | claude --print --permission-mode bypassPermissions > "$review_file"
+} > "$input_file"
+log "running claude (review event: $REVIEW_EVENT)"
+run_interruptible claude --print --permission-mode bypassPermissions < "$input_file" > "$review_file"
 
 if [[ ! -s "$review_file" ]]; then
     die "claude produced an empty review — refusing to post"
@@ -90,3 +90,8 @@ esac
 
 log "posting review on $pr_url"
 gh pr review "$pr_url" "$flag" --body-file "$review_file"
+
+# The Result summary is the verdict: the review event and the first line of
+# the review body, without Markdown heading marks.
+first_line=$(grep -m1 -v '^[[:space:]]*$' "$review_file" | sed -E 's/^[#>*[:space:]]+//' || true)
+result_write "Review ($REVIEW_EVENT): $first_line" "pull-request=$pr_url"

@@ -7,6 +7,8 @@
 #   - $TARGET_REPO                optional: the git URL to clone and work in
 #   - $TARGET_BRANCH              optional: the base branch; defaults to main
 #   - exit 0 = success, non-zero = failure
+#   - /dev/termination-log        the Result (ADR-0008): a summary and the
+#                                 pull-request link, written by agents/common/lib.sh
 #
 # This script stays thin on purpose. It exports the secrets as the environment
 # variables that claude and gh expect. It clones the repo if the Task declares
@@ -15,42 +17,20 @@
 
 set -euo pipefail
 
-log() { printf '[implementer] %s\n' "$*" >&2; }
-die() { log "error: $*"; exit 1; }
+AGENT_NAME=implementer
+# The shared library: secrets export, GitHub setup, the Result writer and the
+# SIGTERM trap. The Dockerfile copies it from agents/common/lib.sh.
+# shellcheck source-path=SCRIPTDIR source=../common/lib.sh
+. "${CONVEYOR_LIB:-/usr/local/lib/conveyor/lib.sh}"
 
 PROMPT_FILE="${PROMPT_FILE:-/task/prompt}"
-SECRETS_ROOT="${SECRETS_ROOT:-/run/secrets}"
 WORKDIR="${WORKDIR:-/tmp/work}"
 
 [[ -r "$PROMPT_FILE" ]] || die "prompt file $PROMPT_FILE not readable"
 
-# conveyor projects the Secret files at /run/secrets/<name>/<key>. In the
-# common case the Secret has a single key. The loop then exports
-# SECRETNAME_UPPER=contents so that standard CLIs find what they expect
-# (ANTHROPIC_API_KEY, GITHUB_TOKEN, and more).
-if [[ -d "$SECRETS_ROOT" ]]; then
-    while IFS= read -r -d '' file; do
-        name=$(basename "$(dirname "$file")")
-        var=$(printf '%s' "$name" | tr '[:lower:]-' '[:upper:]_')
-        export "$var=$(cat "$file")"
-    done < <(find -L "$SECRETS_ROOT" -mindepth 2 -maxdepth 2 -type f -print0 2>/dev/null || true)
-fi
-
-# Some CLIs look for GITHUB_TOKEN. Set it from the conventional secret name
-# that the sample Task declares.
-if [[ -z "${GITHUB_TOKEN:-}" && -n "${GITHUB_TOKEN_FILE:-}" && -r "${GITHUB_TOKEN_FILE}" ]]; then
-    GITHUB_TOKEN=$(cat "$GITHUB_TOKEN_FILE")
-    export GITHUB_TOKEN
-fi
-
-# Store $GITHUB_TOKEN in the git credential helper so that HTTPS pushes work
-# without a TTY. The x-access-token user is the documented form for
-# fine-grained and installation tokens. Classic PATs work the same way.
-if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    git config --global credential.helper store
-    umask 077
-    printf 'https://x-access-token:%s@github.com\n' "$GITHUB_TOKEN" > "$HOME/.git-credentials"
-fi
+secrets_export
+github_setup
+gh_repo_from "${TARGET_REPO:-}"
 
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
@@ -64,7 +44,7 @@ if [[ -n "${TARGET_REPO:-}" ]]; then
 fi
 
 log "running claude"
-claude --print --verbose --output-format stream-json \
+run_interruptible claude --print --verbose --output-format stream-json \
     --permission-mode bypassPermissions \
     < "$PROMPT_FILE"
 
@@ -79,14 +59,21 @@ if [[ -n "${TARGET_REPO:-}" ]] && ! git diff --quiet HEAD; then
     git add -A
     git commit -m "conveyor: automated change" >/dev/null
     git push -u origin "$branch"
+    result_partial "Pushed branch $branch, no pull request yet"
     case "${GIT_HOST:-github}" in
         github)
-            gh pr create --fill --base "${TARGET_BRANCH:-main}" --head "$branch"
+            pr_url=$(gh pr create --fill --base "${TARGET_BRANCH:-main}" --head "$branch" | tail -n1)
+            printf '%s\n' "$pr_url"
+            result_write "Opened a pull request from branch $branch" "pull-request=$pr_url"
             ;;
         *)
             die "git host '${GIT_HOST}' not yet supported — waiting on conveyor-git (post-v0.1.0)"
             ;;
     esac
-else
+elif [[ -n "${TARGET_REPO:-}" ]]; then
     log "no repo diff — nothing to commit"
+    result_write "Claude finished without a change in the repository"
+else
+    log "no TARGET_REPO — answered the prompt only"
+    result_write "Answered the prompt without a repository"
 fi
