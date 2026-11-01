@@ -50,13 +50,18 @@ type Handler struct {
 	// DefaultTaskNamespace receives emitted Tasks whose template leaves
 	// the namespace unset.
 	DefaultTaskNamespace string
-	Log                  logr.Logger
+	// Reader is a live API reader (mgr.GetAPIReader()) for the dedupe list
+	// (ADR-0009). The cache can lag behind a Task that the adapter created
+	// a moment ago. When it is nil, the handler uses Client.
+	Reader client.Reader
+	Log    logr.Logger
 }
 
 var _ http.Handler = (*Handler)(nil)
 
 // +kubebuilder:rbac:groups=openconveyor.ai,resources=clustertriggerclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+// +kubebuilder:rbac:groups=openconveyor.ai,resources=tasks,verbs=create;list
 
 // ServeHTTP validates and dispatches a single webhook request.
 //
@@ -64,8 +69,10 @@ var _ http.Handler = (*Handler)(nil)
 //
 // Responses:
 //
-//	200 Task created (body: {"task": "<name>"})
+//	200 Task created (body: {"task": "<name>", "namespace": "<ns>"})
 //	202 matched but filtered out (body: {"filtered": true})
+//	202 duplicate of an active Task, nothing created
+//	    (body: {"duplicate": true, "task": "<existing>"}, ADR-0009)
 //	400 malformed payload / no prompt produced
 //	401 missing or mismatched signature
 //	404 no ClusterTriggerClass registered for this path
@@ -156,6 +163,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// namespace is not in use.
 	if task.Namespace == "" {
 		task.Namespace = h.DefaultTaskNamespace
+	}
+	stampTriggerClass(task, ctc)
+
+	existing, err := h.findActiveDuplicate(r.Context(), ctc, task)
+	if err != nil {
+		h.Log.Error(err, "Failed to check for a duplicate Task", "triggerClass", ctc.Name)
+		metrics.ObserveWebhook(ctc.Name, metrics.ResultError)
+		writeStatus(w, http.StatusInternalServerError, "dedupe check failed")
+		return
+	}
+	if existing != "" {
+		h.Log.Info("Skipped webhook because an active Task exists", "triggerClass", ctc.Name,
+			"task", existing, "namespace", task.Namespace)
+		metrics.ObserveWebhook(ctc.Name, metrics.ResultDuplicate)
+		writeJSON(w, http.StatusAccepted, map[string]any{"duplicate": true, "task": existing})
+		return
 	}
 
 	if err := h.Client.Create(r.Context(), task); err != nil {
