@@ -1,0 +1,6 @@
+# Lets other kustomizations, for example examples/phone-workflow-stack,
+# include this ClusterTriggerClass without a copy.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - trigger.yaml
