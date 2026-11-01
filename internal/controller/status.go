@@ -15,6 +15,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -37,7 +38,15 @@ const (
 	reasonEgressResolveFail = "EgressResolveFailed"
 )
 
-func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.Task, job *batchv1.Job) error {
+// syncStatus copies the Job state and the agent Result onto the Task and
+// writes the status when it changed. It returns the delay after which the
+// Result read needs another reconcile, or zero.
+func (r *TaskReconciler) syncStatus(
+	ctx context.Context,
+	task *conveyorv1alpha1.Task,
+	job *batchv1.Job,
+	egress []string,
+) (time.Duration, error) {
 	log := logf.FromContext(ctx)
 	before := task.Status.DeepCopy()
 
@@ -57,8 +66,15 @@ func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.
 		ObservedGeneration: task.Generation,
 	})
 
+	// The Result read runs after the phase, so a Task that becomes terminal
+	// in this pass waits for its pod from now on.
+	requeue, err := r.observeResult(ctx, task, job.UID, egress)
+	if err != nil {
+		return 0, err
+	}
+
 	if equalStatus(before, &task.Status) {
-		return nil
+		return requeue, nil
 	}
 
 	if before.Phase != phase {
@@ -71,7 +87,7 @@ func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.
 		}
 	}
 
-	return r.Status().Update(ctx, task)
+	return requeue, r.Status().Update(ctx, task)
 }
 
 // eventActionReconcile is the events.k8s.io/v1 `action` on every Event
@@ -265,6 +281,9 @@ func equalStatus(a, b *conveyorv1alpha1.TaskStatus) bool {
 		return false
 	}
 	if !timesEqual(a.StartTime, b.StartTime) || !timesEqual(a.CompletionTime, b.CompletionTime) {
+		return false
+	}
+	if !apiequality.Semantic.DeepEqual(a.Result, b.Result) {
 		return false
 	}
 	if len(a.Conditions) != len(b.Conditions) {

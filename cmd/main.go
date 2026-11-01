@@ -29,10 +29,13 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -42,6 +45,7 @@ import (
 
 	conveyorv1alpha1 "github.com/openconveyor/openconveyor/api/v1alpha1"
 	"github.com/openconveyor/openconveyor/internal/controller"
+	"github.com/openconveyor/openconveyor/internal/policy"
 	"github.com/openconveyor/openconveyor/internal/trigger"
 	// +kubebuilder:scaffold:imports
 )
@@ -115,7 +119,8 @@ func parseFlags() (flags, zap.Options) {
 			"Defaults to POD_NAMESPACE or \""+defaultTriggerNamespace+"\".")
 	flag.IntVar(&fl.jobTTLSeconds, "job-ttl-seconds", int(controller.DefaultJobTTLSeconds),
 		"Seconds a finished Task Job (and its logs) is kept before Kubernetes deletes it "+
-			"(Job.spec.ttlSecondsAfterFinished). 0 deletes immediately.")
+			"(Job.spec.ttlSecondsAfterFinished). Must be at least 1: with 0 the pod can be "+
+			"deleted before the controller reads the agent Result.")
 	flag.IntVar(&fl.taskTTLSeconds, "task-ttl-seconds", -1,
 		"Cluster-wide default for Task.spec.ttlSecondsAfterFinished: seconds after a Task reaches a "+
 			"terminal phase before it is deleted. A Task's own value wins. Negative (the default) means "+
@@ -240,8 +245,8 @@ func main() {
 func run() error {
 	fl, zapOpts := parseFlags()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
-	if fl.jobTTLSeconds < 0 || fl.jobTTLSeconds > math.MaxInt32 {
-		return fmt.Errorf("--job-ttl-seconds must be between 0 and %d, got %d", math.MaxInt32, fl.jobTTLSeconds)
+	if err := validateJobTTL(fl.jobTTLSeconds); err != nil {
+		return err
 	}
 	if fl.taskTTLSeconds > math.MaxInt32 {
 		return fmt.Errorf("--task-ttl-seconds must be at most %d, got %d", math.MaxInt32, fl.taskTTLSeconds)
@@ -262,6 +267,14 @@ func run() error {
 		Client: client.Options{
 			Cache: &client.CacheOptions{
 				DisableFor: []client.Object{&corev1.Secret{}},
+			},
+		},
+		// The Task controller watches pods for the agent Result (ADR-0008).
+		// The selector limits the Pod informer to Task pods, so the manager
+		// does not cache every pod in the cluster.
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Pod{}: {Label: taskPodSelector()},
 			},
 		},
 		Metrics:                buildMetricsOptions(fl, tlsOpts),
@@ -311,6 +324,27 @@ func run() error {
 		return fmt.Errorf("run manager: %w", err)
 	}
 	return nil
+}
+
+// validateJobTTL checks --job-ttl-seconds. The value 0 lets Kubernetes delete
+// the Job and its pod at once, before the controller reads the termination
+// message, so the controller refuses it.
+func validateJobTTL(v int) error {
+	if v < 1 || v > math.MaxInt32 {
+		return fmt.Errorf("--job-ttl-seconds must be between 1 and %d, got %d: "+
+			"0 deletes the pod before the controller can read the agent Result", math.MaxInt32, v)
+	}
+	return nil
+}
+
+// taskPodSelector selects the pods of Task Jobs: the pods that carry the
+// openconveyor.ai/task label and the conveyor managed-by label.
+func taskPodSelector() labels.Selector {
+	hasTask, err := labels.NewRequirement(policy.LabelTaskName, selection.Exists, nil)
+	utilruntime.Must(err)
+	managed, err := labels.NewRequirement(policy.LabelManagedBy, selection.Equals, []string{policy.ManagedByValue})
+	utilruntime.Must(err)
+	return labels.NewSelector().Add(*hasTask, *managed)
 }
 
 // resolveTriggerNamespace picks the namespace for signature Secret lookups.

@@ -67,6 +67,10 @@ type TaskReconciler struct {
 	// spec.ttlSecondsAfterFinished (--task-ttl-seconds). When it is nil,
 	// the controller never deletes a Task that sets no TTL of its own.
 	DefaultTaskTTLSeconds *int32
+	// ResultWait is how long the controller looks for the agent pod of a
+	// terminal Task before the Result condition says Unavailable. Zero
+	// means DefaultResultWait.
+	ResultWait time.Duration
 }
 
 var _ reconcile.Reconciler = (*TaskReconciler)(nil)
@@ -78,6 +82,7 @@ var _ reconcile.Reconciler = (*TaskReconciler)(nil)
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
@@ -98,9 +103,15 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	// finishes, its TTLSecondsAfterFinished deletion queues a reconcile.
 	// Without this check, that reconcile recreates the Job and runs an
 	// agent with side effects again. The only work that remains for a
-	// terminal Task is garbage collection.
+	// terminal Task is the Result read and garbage collection.
 	if isTerminal(task.Status.Phase) {
-		return r.collectTerminal(ctx, &task)
+		requeue, err := r.recordTerminalResult(ctx, &task)
+		if err != nil {
+			metrics.ObserveReconcileError(metrics.StepStatus)
+			return ctrl.Result{}, err
+		}
+		res, err := r.collectTerminal(ctx, &task)
+		return minRequeue(res, requeue), err
 	}
 
 	if err := validateTask(&task); err != nil {
@@ -175,18 +186,20 @@ func (r *TaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, fmt.Errorf("ensure job: %w", err)
 	}
 
-	if err := r.syncStatus(ctx, &task, job); err != nil {
+	resultRequeue, err := r.syncStatus(ctx, &task, job, effectiveEgress)
+	if err != nil {
 		metrics.ObserveReconcileError(metrics.StepStatus)
 		return ctrl.Result{}, err
 	}
+	res := minRequeue(ctrl.Result{}, resultRequeue)
 
 	// The steps above resolve the hostnames to a snapshot. CDN and anycast
 	// records rotate, so the controller requeues on an interval while the
 	// Task is alive. ensureNetworkPolicy then patches in the current set.
 	if r.EgressRefreshInterval > 0 && !isTerminal(task.Status.Phase) && policy.HasHostnames(effectiveEgress) {
-		return ctrl.Result{RequeueAfter: r.EgressRefreshInterval}, nil
+		res = minRequeue(res, r.EgressRefreshInterval)
 	}
-	return ctrl.Result{}, nil
+	return res, nil
 }
 
 // collectTerminal deletes a terminal Task when its TTL has elapsed, or
@@ -406,7 +419,9 @@ func (r *TaskReconciler) tasksForAgentClass(ctx context.Context, obj client.Obje
 }
 
 // SetupWithManager sets up the reconciler to watch Tasks, every owned
-// resource, and the ClusterAgentClasses that Tasks reference.
+// resource, the ClusterAgentClasses that Tasks reference, and the agent
+// pods. The Pod watch delivers the termination message (ADR-0008). The
+// manager restricts the Pod informer to Task pods (cmd/main.go).
 func (r *TaskReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	if r.Resolver == nil {
 		r.Resolver = policy.DefaultResolver{}
@@ -435,6 +450,7 @@ func (r *TaskReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager)
 		Owns(&rbacv1.RoleBinding{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Watches(&conveyorv1alpha1.ClusterAgentClass{}, handler.EnqueueRequestsFromMapFunc(r.tasksForAgentClass)).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(taskForPod)).
 		Named("task").
 		Complete(r)
 }

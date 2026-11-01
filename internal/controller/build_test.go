@@ -310,3 +310,16 @@ func TestBuildResourceRequirements(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildJob_TerminationMessage pins ADR-0008: the agent reports its
+// Result in /dev/termination-log with the File policy. The Job never uses
+// FallbackToLogsOnError, which copies log lines into the pod status.
+func TestBuildJob_TerminationMessage(t *testing.T) {
+	c := buildMinimalJob(t).Spec.Template.Spec.Containers[0]
+	if c.TerminationMessagePath != "/dev/termination-log" {
+		t.Errorf("TerminationMessagePath = %q, want /dev/termination-log", c.TerminationMessagePath)
+	}
+	if c.TerminationMessagePolicy != corev1.TerminationMessageReadFile {
+		t.Errorf("TerminationMessagePolicy = %q, want File", c.TerminationMessagePolicy)
+	}
+}

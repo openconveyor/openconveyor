@@ -192,7 +192,7 @@ namespace given by `--trigger-namespace` (default `conveyor-system`).
 |---|---|---|---|
 | `--trigger-bind-address` | blank (disabled) | none | Starts the webhook trigger adapter on this address. Use it with `--trigger-namespace`, the namespace that holds the HMAC Secrets. |
 | `--egress-refresh-interval` | `5m` | none | Re-resolves the egress hostnames while a Task runs, so the NetworkPolicy follows DNS changes. `0` disables the refresh. |
-| `--job-ttl-seconds` | `3600` | `manager.jobTTLSeconds` | Kubernetes keeps a finished Job and its logs for this many seconds. |
+| `--job-ttl-seconds` | `3600` | `manager.jobTTLSeconds` | Kubernetes keeps a finished Job and its logs for this many seconds. The minimum is `1`. The controller refuses `0`, because the pod can then disappear before the controller reads the Result. |
 | `--task-ttl-seconds` | unset | `manager.taskTTLSeconds` | The controller deletes a terminal Task after this many seconds. The Task's own `spec.ttlSecondsAfterFinished` wins. Unset at both levels keeps the Task. |
 
 ## Examples

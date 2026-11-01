@@ -78,6 +78,9 @@ func buildServiceAccount(task *conveyorv1alpha1.Task) *corev1.ServiceAccount {
 //   - backoffLimit=0: agent runs are expensive, so there are no blind
 //     retries.
 //   - ttlSecondsAfterFinished comes from the controller's --job-ttl-seconds.
+//   - The agent container reports its Result in /dev/termination-log with
+//     the File policy. The controller never sets FallbackToLogsOnError,
+//     because that copies log lines into the pod status (ADR-0008).
 //
 // The caller must first union the agent-required secrets with the
 // task-declared secrets into `effectiveSecrets`. The caller must also
@@ -149,7 +152,9 @@ func buildJob(
 				Type: corev1.SeccompProfileTypeRuntimeDefault,
 			},
 		},
-		VolumeMounts: mounts,
+		VolumeMounts:             mounts,
+		TerminationMessagePath:   terminationMessagePath,
+		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 	}
 
 	pod := corev1.PodTemplateSpec{

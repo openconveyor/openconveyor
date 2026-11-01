@@ -18,7 +18,8 @@ manager:
     pullPolicy: IfNotPresent
 
   ## Seconds a finished Task Job (and its logs) is kept before Kubernetes
-  ## deletes it (--job-ttl-seconds). 0 deletes immediately.
+  ## deletes it (--job-ttl-seconds). Must be at least 1: the controller
+  ## refuses 0, because the pod can then vanish before it reads the Result.
   ##
   jobTTLSeconds: 3600
 
