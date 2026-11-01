@@ -32,10 +32,6 @@ _Avoid_: agent template, agent profile
 One of the three agent images that this repo ships: the implementer, the reviewer and the reporter. Each one is a worked example of the agent contract, not the only agent that can run.
 _Avoid_: built-in agent, official agent
 
-**Planner**:
-A planned reference agent that turns a request into a specified issue on the git host. It reads the repository and writes no code. It is not in v0.4.0.
-_Avoid_: intake, scribe, triager, specifier
-
 **Iteration**:
 A Task that updates an existing pull request in response to review comments. It pushes to the branch of that pull request and never opens a second one.
 _Avoid_: follow-up, fix-up run, round two
