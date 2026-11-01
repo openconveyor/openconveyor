@@ -142,7 +142,7 @@ below.
 
 ```sh
 # 1. Install CRDs and the controller into conveyor-system.
-kubectl apply -f https://github.com/openconveyor/openconveyor/releases/download/v0.2.1/install.yaml
+kubectl apply -f https://github.com/openconveyor/openconveyor/releases/download/v0.4.0/install.yaml
 
 # 2. Create the Task namespace and the Secrets the sample Task mounts.
 #    Secrets are projected as files at /run/secrets/<name>/<key>; the
@@ -154,7 +154,7 @@ kubectl -n conveyor-tasks create secret generic github-token \
   --from-literal=token="${GITHUB_TOKEN:-unused}"
 
 # 3. Apply the sample AgentClasses and a Task, then watch it run.
-kubectl apply -k https://github.com/openconveyor/openconveyor//config/samples?ref=v0.2.1
+kubectl apply -k https://github.com/openconveyor/openconveyor//config/samples?ref=v0.4.0
 kubectl -n conveyor-tasks get tasks -w
 ```
 
@@ -240,7 +240,7 @@ guarantee from inside a pod are in
 
 ## Status and roadmap
 
-OpenConveyor is alpha. The current release is v0.2.1. Unit and envtest
+OpenConveyor is alpha. The current release is v0.4.0. Unit and envtest
 integration tests cover the security baseline and the trigger adapter.
 The controller exports Prometheus metrics for phase transitions,
 reconcile errors, run duration and webhook outcomes. The APIs can

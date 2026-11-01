@@ -7,8 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — TBD
+
+The GitHub issue-to-PR loop. Label an issue `conveyor:ready`, and the
+implementer opens a traceable PR (`Closes #N`, an issue comment, the
+`conveyor:review` label); label the PR `conveyor:iterate`, and it addresses
+the review on the same branch. Agents report a Result that the controller
+validates and stores on the Task, the webhook adapter dedupes active Tasks,
+and `examples/phone-workflow-stack` installs the whole flow on kind with one
+command. Read **Breaking** before you upgrade.
+
 ### Breaking
 
+- **RBAC:** the manager ClusterRole gains `pods` `get;list;watch` (#116),
+  so that the controller can read the agent Result from the termination
+  message. Helm users must upgrade the chart together with the image: a
+  manager without the rule cannot sync its Pod informer and does not start.
+  `install.yaml` carries the rule.
+- **Controller:** the manager refuses `--job-ttl-seconds=0` at startup
+  (#116), because Kubernetes can then delete the pod before the controller
+  reads the Result. Set at least `1` (the default stays `3600`).
+- **API:** the new CRD fields are additive: `Task.status.result`, the
+  `Result` condition, the `Summary` printer column and
+  `ClusterTriggerClass.spec.dedupe`. No existing field changes. Apply the
+  new CRDs (`install.yaml`, or the chart with `crd.enable`) before the new
+  controller.
 - **Agents:** implementer v2 (#119). Claude no longer opens PRs itself; the
   entrypoint owns the branch, commit, push and PR. The prompt tells Claude to
   leave the tree uncommitted and `--disallowedTools` blocks `git commit`,
@@ -23,13 +46,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   labels. An empty diff or a failed Claude run now fails the Task. An empty
   repository gets its base branch with an empty first commit. Results carry
   the `pull-request` and `issue` links.
-
-- **Security:** the egress allowlist now opens **port 443 only** (TCP and
-  UDP) on the resolved CIDRs instead of every port. A Task whose agent
-  talks to an allowlisted host on another port (SSH to `github.com`, a
-  database, a non-standard HTTPS port) must list the ports in the new
-  `spec.permissions.egressPorts` field, which replaces the default for all
-  entries; the DNS rule keeps port 53. (#24)
 
 ### Added
 
@@ -79,6 +95,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   File`, the manager ClusterRole gains `pods` `get;list;watch` with a
   label-restricted Pod informer, `--job-ttl-seconds=0` is refused at
   startup, and `kubectl get task -o wide` shows a `Summary` column.
+
+### Changed
+
+- **Docs:** `docs/phone-workflow.md` is now the tutorial for the GitHub flow
+  (#125): issue + `conveyor:ready` → PR with `Closes #N` and a review →
+  comments + `conveyor:iterate` → push to the same branch → merge, with the
+  `gh` equivalent of each tap and a troubleshooting table. Install details
+  moved to the `phone-workflow-stack` README; `README.md` and
+  `examples/README.md` list the stack, which replaces shared prerequisites
+  1–5. `plugin-authoring.md` and `GLOSSARY.md` name three reference agents
+  (the planner is not in v0.4.0).
+
+## [0.3.0] — TBD
+
+Hardening release: egress ports, Task garbage collection, Events, admission validation, signed images with an SBOM, and Simplified Technical English docs.
+
+### Breaking
+
+- **Security:** the egress allowlist now opens **port 443 only** (TCP and
+  UDP) on the resolved CIDRs instead of every port. A Task whose agent
+  talks to an allowlisted host on another port (SSH to `github.com`, a
+  database, a non-standard HTTPS port) must list the ports in the new
+  `spec.permissions.egressPorts` field, which replaces the default for all
+  entries; the DNS rule keeps port 53. (#24)
+
+### Added
+
 - **API:** `kubectl get clusteragentclasses` shows an `Image` column
   (`.spec.image`) and `kubectl get clustertriggerclasses` shows a `Path`
   column (`.spec.path`), before `Age`. (#18)
@@ -118,7 +161,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API:** `spec.permissions.egressPorts` on `Task` (and on the Task
   template of `ClusterTriggerClass`): up to 16 distinct ports in 1–65535,
   applied to every egress allowlist entry; unset means `[443]`. (#24)
-
 - **Controller:** Kubernetes Events on the Task so `kubectl describe task`
   shows what happened (#20). A `Normal` Event per phase transition
   (`Pending`, `Running`, `Completed`) and a `Warning` for `Failed`,
@@ -148,14 +190,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Docs:** `docs/phone-workflow.md` is now the tutorial for the GitHub flow
-  (#125): issue + `conveyor:ready` → PR with `Closes #N` and a review →
-  comments + `conveyor:iterate` → push to the same branch → merge, with the
-  `gh` equivalent of each tap and a troubleshooting table. Install details
-  moved to the `phone-workflow-stack` README; `README.md` and
-  `examples/README.md` list the stack, which replaces shared prerequisites
-  1–5. `plugin-authoring.md` and `GLOSSARY.md` name three reference agents
-  (the planner is not in v0.4.0).
 - **Docs:** `docs/plugin-authoring.md` is rewritten against the real
   `ClusterAgentClass`, `ClusterTriggerClass` and `Task` schemas: the
   `{from, to, default}` mapping list of the webhook adapter (no
@@ -425,6 +459,9 @@ and the three reference agents are published to
 
 ## Links
 
-- [Unreleased]: https://github.com/openconveyor/openconveyor/compare/v0.2.0...HEAD
+- [Unreleased]: https://github.com/openconveyor/openconveyor/compare/v0.4.0...HEAD
+- [0.4.0]: https://github.com/openconveyor/openconveyor/compare/v0.3.0...v0.4.0
+- [0.3.0]: https://github.com/openconveyor/openconveyor/compare/v0.2.1...v0.3.0
+- [0.2.1]: https://github.com/openconveyor/openconveyor/compare/v0.2.0...v0.2.1
 - [0.2.0]: https://github.com/openconveyor/openconveyor/releases/tag/v0.2.0
 - [0.1.0]: https://github.com/openconveyor/openconveyor/releases/tag/v0.1.0
