@@ -58,7 +58,7 @@ kind-up: ## Create the kind cluster with the port mapping for the Funnel.
 # kustomization root.
 .PHONY: release
 release:
-	@set -e; \
+	@set -e; mkdir -p $(RELEASE_DIR); \
 	case '$(INSTALL_YAML)' in \
 		http://*|https://*) src='$(INSTALL_YAML)'; rm -f $(RELEASE_DIR)/install.yaml ;; \
 		*) cp '$(INSTALL_YAML)' $(RELEASE_DIR)/install.yaml; src=install.yaml ;; \
