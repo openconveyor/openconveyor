@@ -1,125 +1,171 @@
-# Phone Workflow
+# Phone workflow
 
-The GitHub Issues trigger of OpenConveyor works from your phone. You
-create an issue in GitHub mobile and label it. Then an agent runs on
-its own: it clones the repo, does the work, and opens a PR. You review
-the PR on your phone, merge it, and send the next task.
+You can drive OpenConveyor from the GitHub mobile app. Write an issue
+and add a label, and an agent opens a pull request. Review the PR on
+your phone. When you want changes, add a second label, and the agent
+updates the same PR. Then merge.
 
-## Prerequisites
+This tutorial uses the GitHub flow of the
+[`phone-workflow-stack`](../examples/phone-workflow-stack/) example. Its
+README installs everything: the controller with the trigger adapter, the
+agent classes, the trigger classes, the Secrets, the webhooks and the
+Tailscale Funnel. Each step below shows the tap in the GitHub app and
+the `gh` command that does the same.
 
-- The webhook adapter is reachable from the internet (a tunnel, a load
-  balancer, or Cloudflare Tunnel).
-- A GitHub webhook on your repo points at the adapter (see
-  `examples/github-issues-claude-code/README.md`).
-- The `conveyor:ready` label exists on the repo.
-- The Secrets `github-token` and `anthropic-api-key` exist in the
-  `conveyor-tasks` namespace.
+## Before you start
 
-## Step-by-step
+- You installed the stack and registered the three webhooks. See
+  [the stack README](../examples/phone-workflow-stack/README.md#install).
+- The target repository has a default branch and the labels
+  `conveyor:ready`, `conveyor:review` and `conveyor:iterate`. The
+  scripts `init-repo.sh` and `create-labels.sh` of the stack do this.
+- `REPO` names the repository in the commands, for example
+  `REPO=scholtenmartijn/openconveyor-test`.
+
+## The loop
 
 ```mermaid
 sequenceDiagram
-    participant U as Phone (GitHub mobile)
+    participant U as You (GitHub mobile)
     participant G as GitHub
-    participant W as Webhook adapter
-    participant C as Controller
-    participant A as Agent (Job)
-    U->>G: create issue, add label conveyor:ready
-    G->>W: issues webhook
-    W->>C: create Task
-    C->>A: reconcile Task into Job
-    A->>G: clone repo, open PR
-    G-->>U: notification
-    U->>G: review and merge
+    participant I as Implementer
+    participant R as Reviewer
+    U->>G: issue + label conveyor:ready
+    G->>I: issues webhook → Task
+    I->>G: branch conveyor/issue-N, PR "Closes #N", issue comment, label conveyor:review
+    G->>R: pull_request webhook → Task
+    R->>G: review
+    U->>G: comments + label conveyor:iterate
+    G->>I: pull_request webhook → Task (iterate)
+    I->>G: push to the same branch, "Addressed in <sha>" replies
+    U->>G: merge
 ```
 
-### 1. Create an issue on your phone
+Each label is a gate. Nothing runs until you add `conveyor:ready` or
+`conveyor:iterate`. While a run for an issue or a PR is active, another
+label event for it starts nothing.
 
-Open the GitHub mobile app, go to your repo, and create a new issue.
-The issue body is the prompt. Write it as you speak to a developer:
+## 1. Write the issue
 
-> Set up a Go project with a basic HTTP server, Dockerfile, and
-> Makefile. Use chi for routing. Open a PR against main.
+In the app, open the repository, tap **Issues**, then **+**. Write the
+title and the body as you write to a developer. The implementer reads
+the title, the body, the labels and the comments of the issue.
 
-### 2. Label the issue
+```sh
+gh issue create -R "$REPO" \
+  --title "Add a CONTRIBUTING.md that explains how to propose a change" \
+  --body "Write a short CONTRIBUTING.md at the repository root. Explain how to propose a change: open an issue that describes it, add the label conveyor:ready, then review the pull request that the OpenConveyor implementer opens. Keep it under 30 lines."
+```
 
-Add the `conveyor:ready` label to the issue. This label is the gate.
-The webhook starts only when you apply this label, so you can draft an
-issue without the label safely.
+Write the task, not the git steps. The implementer creates the branch,
+the commit and the PR itself. It ignores an instruction such as "open a
+PR against main".
 
-### 3. Agent runs
+## 2. Add the label `conveyor:ready`
 
-GitHub sends the webhook, the adapter creates a Task, and the
-controller reconciles it into a hardened Job. The agent clones your
-repo, runs Claude with your prompt, and opens a PR if it makes
-changes.
+On the issue, tap **Labels** and select `conveyor:ready`.
 
-GitHub sends a notification to your phone when the agent creates the
-PR.
+```sh
+gh issue edit <issue> -R "$REPO" --add-label conveyor:ready
+```
 
-### 4. Review and merge
+GitHub sends the `issues` webhook, and the adapter creates a Task. On
+the cluster you can follow it:
 
-Open the PR in GitHub mobile. Review the changes, write comments, or
-approve and merge. GitHub deletes the agent's branch after the merge
-(if you enabled that GitHub setting).
+```sh
+kubectl -n conveyor-tasks get tasks -L openconveyor.ai/issue-number
+kubectl -n conveyor-tasks logs -f job/<task>
+```
 
-### 5. Dispatch the next task
+## 3. Read the pull request
 
-Create another issue with the next instruction:
+After a few minutes, the issue has a comment from the implementer:
+`Opened https://github.com/<owner>/<repo>/pull/<n>`. The PR comes from
+the branch `conveyor/issue-<issue>`. Its body ends with `Closes
+#<issue>` and the footer `Opened by the OpenConveyor implementer`. The
+PR has the label `conveyor:review`, so the reviewer agent posts a review
+a few minutes later.
 
-> Add user authentication with JWT. Use the existing chi router.
-> Include middleware and a /login endpoint. Open a PR against main.
+```sh
+gh pr view <pr> -R "$REPO" --json title,headRefName,labels,closingIssuesReferences
+gh pr view <pr> -R "$REPO" --comments
+```
 
-Label it `conveyor:ready`. The cycle repeats.
+The Task also has the PR link in its Result:
 
-## Iterative development workflow
+```sh
+kubectl -n conveyor-tasks get task <task> -o jsonpath='{.status.result.summary}{"\n"}'
+kubectl -n conveyor-tasks get task <task> \
+  -o jsonpath='{.status.result.links[?(@.name=="pull-request")].url}{"\n"}'
+```
 
-This pattern works well when you build a project in steps:
+## 4. Ask for changes with `conveyor:iterate`
 
-1. **Scaffold** — "Set up the project structure with Go modules,
-   Dockerfile, CI, and a basic health endpoint."
-2. **Feature** — "Add a /users CRUD API with SQLite storage."
-3. **Feature** — "Add input validation and error handling to the
-   /users endpoints."
-4. **Fix** — "The POST /users endpoint returns 500 when the email
-   is duplicate. Add a unique constraint and return 409."
-5. **Refactor** — "Extract the SQLite queries into a repository
-   pattern."
+Read the diff in the **Files changed** tab. Comment on a line, or write
+a comment on the PR. The review of the reviewer agent also counts. Then
+tap **Labels** and select `conveyor:iterate`.
 
-Each step is one issue, one agent run, one PR. You review each PR on
-your phone between the steps.
+```sh
+gh pr comment <pr> -R "$REPO" --body "Add a short section about the review labels."
+gh pr edit <pr> -R "$REPO" --add-label conveyor:iterate
+```
+
+The implementer checks out the PR branch and reads the unresolved
+review threads, plus the comments and the reviews since its last push.
+It pushes a new commit to the same branch. It replies `Addressed in
+<sha>.` on each line comment that it addressed. It does not resolve the
+threads: you resolve them after you check the change.
+
+Then it removes `conveyor:iterate`, so that you can add it again for the
+next round. It also removes and adds `conveyor:review`, so the reviewer
+reviews the new commit.
+
+```sh
+gh pr view <pr> -R "$REPO" --json commits,labels --jq '{commits: [.commits[].messageHeadline], labels: [.labels[].name]}'
+```
+
+Repeat this step until you like the change.
+
+## 5. Merge
+
+Tap **Merge pull request**. The merge closes the issue, because the PR
+body says `Closes #<issue>` and the PR targets the default branch.
+
+```sh
+gh pr merge <pr> -R "$REPO" --squash --delete-branch
+gh issue view <issue> -R "$REPO" --json state
+```
+
+Write the next issue, and the loop starts again.
+
+## When something goes wrong
+
+The Task status says what happened. The `Result` condition and
+`status.result.summary` hold the reason that the agent reported, for
+example `claude made no change in the repository; nothing to commit`.
+
+```sh
+kubectl -n conveyor-tasks get tasks -o wide
+kubectl -n conveyor-tasks describe task <task>
+```
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| No Task after the label | The webhook delivery failed | On GitHub, open **Settings → Webhooks → Recent Deliveries**. A `401` means that the secret differs; a delivery error after a Funnel start means a cold start: redeliver after a minute. |
+| The adapter answers `202 {"duplicate": true}` | A Task for the issue or the PR is active | Wait until it ends, then add the label again. |
+| The Task is `Failed` with "no change" | Claude found nothing to change | Make the issue more specific, and add the label again. |
+| The iteration says `Nothing to address` | No unresolved thread and no comment after the last push | Write a comment first, then add `conveyor:iterate`. |
+| No review appears | The label `conveyor:review` is missing on the repository | Run `scripts/create-labels.sh` of the stack. |
+| The agent log shows `dial tcp …:443: i/o timeout` for `api.github.com` | GitHub rotates the IPs of its API. The NetworkPolicy allows the IPs from the last DNS lookup, and the controller looks again every 5 minutes | Add the label again. See [default-deny egress](security-model.md#1-default-deny-egress). |
 
 ## Tips
 
-- **Be specific in the prompt.** Include file names, function names,
-  and the expected behavior. The agent works better with concrete
-  instructions than with vague requests.
-- **Refer to previous PRs.** "Building on the changes from PR #3,
-  add pagination to the /users endpoint."
-- **Set `TARGET_REPO` and `TARGET_BRANCH`.** The trigger template
-  in `examples/github-issues-claude-code/trigger.yaml` maps
-  `repository.clone_url` to `config.TARGET_REPO` and
-  `repository.default_branch` to `config.TARGET_BRANCH`. The
-  controller projects them into the agent container as env vars. This
-  is how the agent clones the correct repo.
-- **Check the logs if the PR does not appear.** Find the Task name
-  with `kubectl -n conveyor-tasks get tasks` and follow the Job logs:
-  ```sh
-  kubectl -n conveyor-tasks logs -f job/<task-name>
-  ```
-
-## Alternative: GitHub Actions workflow_dispatch
-
-If your cluster is not reachable from the internet (no tunnel), you
-can use GitHub Actions as the dispatch mechanism:
-
-1. Create a workflow with `on: workflow_dispatch` and a `prompt`
-   input field.
-2. The workflow runs `kubectl apply` with the prompt embedded in a
-   Task YAML.
-3. This requires a self-hosted runner with cluster access, or a
-   kubeconfig in a GitHub Secret.
-
-This is not a reference example yet. The pattern is identical to the
-`claude-code-slash-dispatch` example: `kubectl apply` with a templated
-Task YAML.
+- Write one change in each issue. A small issue gives a PR that you can
+  review on a phone.
+- Name the files and the expected behavior in the issue. Refer to
+  earlier PRs by number.
+- Comment on a line when the change is local. The reply `Addressed in
+  <sha>` then shows which commit made it.
+- A finished Task never blocks a new run. To run an issue again, remove
+  the label and add it again. The implementer reuses the open PR of the
+  issue.
