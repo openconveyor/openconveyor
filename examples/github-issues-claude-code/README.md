@@ -9,17 +9,23 @@ that implements the issue.
 2. GitHub POSTs to `https://<your-domain>/github/issues` with an
    `X-Hub-Signature-256` header.
 3. The OpenConveyor trigger adapter validates the HMAC and filters to
-   `action=labeled` + `label.name=conveyor:ready`. It then creates a
-   `Task` in the `conveyor-tasks` namespace with the issue body as
-   the prompt.
-4. The `claude-code-implementer` AgentClass runs. If the prompt asks
-   for a code change, the agent clones the repo, edits the code, pushes
-   a branch, and opens a PR.
+   `action=labeled` + `label.name=conveyor:ready`. When no Task for the
+   same issue is active, it creates a `Task` in the `conveyor-tasks`
+   namespace with `ISSUE_NUMBER`, `TARGET_REPO` and `TARGET_BRANCH`.
+4. The `claude-code-implementer` AgentClass runs. The agent reads the
+   issue with `gh`, clones the repo, and lets Claude edit the code. Then
+   it pushes `conveyor/issue-<n>` and opens a PR with `Closes #<n>`. It
+   comments on the issue with the PR link, and labels the PR
+   `conveyor:review`.
+5. `kubectl get task` shows the PR URL in `status.result`.
 
 ## Setup
 
 Read the [shared prerequisites](../README.md#shared-prerequisites)
-first: the namespace, the AgentClass, and the API key Secrets.
+first: the namespace, the AgentClass, and the API key Secrets. Then read
+[GitHub labels and webhooks](../README.md#github-labels-and-webhooks):
+the three labels, one webhook for each path, and the newline pitfall of
+the webhook secret.
 
 ### 1. Create the webhook signing Secret
 
@@ -48,13 +54,11 @@ On the repository: **Settings → Webhooks → Add webhook**.
 - **Events:** "Let me select individual events" → `Issues` only
 - **Active:** ✓
 
-### 4. Create the trigger label
+### 4. Create the labels
 
-```bash
-gh label create conveyor:ready --repo acme/widgets \
-  --color ededed \
-  --description "Dispatch to OpenConveyor"
-```
+Create `conveyor:ready`, `conveyor:review` and `conveyor:iterate` as
+[GitHub labels and webhooks](../README.md#github-labels-and-webhooks)
+shows. The implementer adds `conveyor:review` to its PR.
 
 ## Verify
 
@@ -69,7 +73,14 @@ kubectl -n conveyor-tasks get tasks -w
 ```
 
 Expected result: within seconds, `kubectl get task` shows a
-`gh-issue-xxxxx` Task that moves through `Running` → `Completed`. If
+`gh-issue-xxxxx` Task that moves through `Running` → `Completed`. Then
+the PR URL is in the Result:
+
+```bash
+kubectl -n conveyor-tasks get task -o wide   # the Summary column
+kubectl -n conveyor-tasks get task <name> \
+  -o jsonpath='{.status.result.links[?(@.name=="pull-request")].url}{"\n"}'
+``` If
 `kubectl get tasks` is empty, check `kubectl -n conveyor-system logs
 <conveyor-pod>` for signature errors.
 

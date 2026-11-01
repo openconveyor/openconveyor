@@ -10,7 +10,7 @@ This guide describes the two contracts as the code implements them.
 That code is the types in `api/v1alpha1/`, the Job builder in
 `internal/controller/build.go`, the projections in `internal/policy/`
 and the webhook adapter in `internal/trigger/`. The three reference
-agents under `agents/` show the agent contract in use. The five
+agents under `agents/` show the agent contract in use. The six
 examples under `examples/` show the trigger contract in use.
 
 ## Agents
@@ -298,10 +298,12 @@ failed Claude run fails the Task, and the Result says why. The
 repository.
 
 The reference trigger for GitHub Issues maps `repository.clone_url` to
-`config.TARGET_REPO` and `repository.default_branch` to
-`config.TARGET_BRANCH`. The reviewer trigger maps
-`pull_request.html_url` to the prompt, and the reviewer extracts the
-PR URL from there.
+`config.TARGET_REPO`, `repository.default_branch` to
+`config.TARGET_BRANCH`, and `issue.number` to `config.ISSUE_NUMBER`.
+The iterate trigger maps `pull_request.number` to `config.PR_NUMBER`
+and `pull_request.base.ref` to `config.TARGET_BRANCH`. The reviewer
+trigger maps `pull_request.html_url` to the prompt, and the reviewer
+extracts the PR URL from there.
 
 ### Register the class
 
@@ -391,6 +393,9 @@ metadata:
   name: github-issues
 spec:
   path: /github
+  dedupe:
+    uniqueBy:
+      - openconveyor.ai/issue-number
   signature:
     header: X-Hub-Signature-256
     algorithm: sha256
@@ -421,6 +426,13 @@ spec:
     mappings:
       - from: issue.title
         to: prompt
+      - from: issue.number
+        to: config.ISSUE_NUMBER
+      - from: repository.clone_url
+        to: config.TARGET_REPO
+      - from: repository.default_branch
+        to: config.TARGET_BRANCH
+        default: main
       - from: issue.number
         to: labels.openconveyor.ai/issue-number
       - from: sender.login
@@ -543,7 +555,7 @@ Helm chart and `config/rbac/` grant it.
 
 ### Examples that ship
 
-The five examples under [`examples/`](../examples/) cover both trigger
+The six examples under [`examples/`](../examples/) cover both trigger
 kinds and all three reference agents:
 
 | Example | Trigger | Agent |
@@ -551,6 +563,7 @@ kinds and all three reference agents:
 | [`github-issues-claude-code/`](../examples/github-issues-claude-code/) | GitHub Issues webhook | Implementer |
 | [`linear-claude-code/`](../examples/linear-claude-code/) | Linear webhook | Implementer |
 | [`github-pr-claude-code/`](../examples/github-pr-claude-code/) | GitHub Pull Requests webhook | Reviewer |
+| [`github-pr-iterate/`](../examples/github-pr-iterate/) | GitHub Pull Requests webhook | Implementer (iterate mode) |
 | [`claude-code-slash-dispatch/`](../examples/claude-code-slash-dispatch/) | Claude Code slash command | Implementer |
 | [`cronjob-reporter/`](../examples/cronjob-reporter/) | Kubernetes CronJob | Reporter |
 

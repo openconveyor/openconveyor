@@ -33,6 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Examples:** GitHub trigger examples v2 (#122). The issues trigger maps
+  `issue.number` to `config.ISSUE_NUMBER`, uses `issue.html_url` as the
+  fallback prompt and dedupes on `openconveyor.ai/issue-number`; the PR
+  review trigger dedupes on `openconveyor.ai/pr-number`. New
+  `examples/github-pr-iterate/` (`conveyor:iterate` on a PR → implementer in
+  iterate mode, path `/github/pull-request-iterate`, its own webhook). The
+  sample ClusterTriggerClass gains `ISSUE_NUMBER`, `TARGET_REPO`,
+  `TARGET_BRANCH` and dedupe. `examples/README.md` lists the three labels,
+  one webhook per path, and the trailing-newline pitfall of the HMAC secret.
 - **Agents:** shared shell library `agents/common/lib.sh` (#118), copied into
   each reference image (build context is now `agents/`; no shared base
   image): secrets export, `GH_TOKEN` and git credential setup, `TARGET_REPO`
