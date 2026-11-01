@@ -44,11 +44,19 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 RUN groupadd --system --gid 65532 conveyor \
     && useradd --system --uid 65532 --gid 65532 --home-dir /tmp --shell /usr/sbin/nologin conveyor
 
-COPY --chown=65532:65532 entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# The build context is agents/, so that the image can copy the shared library
+# (no shared base image):
+#   docker build -f agents/claude-code-reporter/Dockerfile agents/
+COPY common/lib.sh /usr/local/lib/conveyor/lib.sh
+COPY --chown=65532:65532 claude-code-reporter/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0644 /usr/local/lib/conveyor/lib.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
 
 USER 65532:65532
+# gh never prompts and prints no color codes into the logs.
 ENV HOME=/tmp \
+    GH_PROMPT_DISABLED=1 \
+    NO_COLOR=1 \
     NPM_CONFIG_CACHE=/tmp/.npm
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

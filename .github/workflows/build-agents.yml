@@ -20,6 +20,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scripts:
+    name: Agent scripts (shellcheck + shell tests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run shellcheck and the entrypoint tests
+        run: make test-agents
+
   build:
     name: Build ${{ matrix.agent }}
     runs-on: ubuntu-latest
@@ -37,7 +46,8 @@ jobs:
       - name: Build ${{ matrix.agent }}
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
-          context: agents/${{ matrix.agent }}
+          # The context is agents/, so the image can copy agents/common/lib.sh.
+          context: agents
           file: agents/${{ matrix.agent }}/Dockerfile
           push: false
           load: true

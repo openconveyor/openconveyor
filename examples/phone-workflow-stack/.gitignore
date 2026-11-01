@@ -1,0 +1,8 @@
+# The Secret values never go into git. Only the kustomization and the README
+# of secrets/ are tracked.
+/secrets/*
+!/secrets/kustomization.yaml
+!/secrets/README.md
+# `make` writes these from VERSION and INSTALL_YAML.
+/base/release/kustomization.yaml
+/base/release/install.yaml

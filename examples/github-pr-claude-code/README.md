@@ -22,7 +22,8 @@ effect on the git host is `gh pr review --comment`.
 ## Setup
 
 Read the [shared prerequisites](../README.md#shared-prerequisites)
-first: the namespace, the AgentClass, and the API key Secrets.
+first: the namespace, the AgentClass, and the API key Secrets. Then read
+[GitHub labels and webhooks](../README.md#github-labels-and-webhooks).
 
 ### 1. Apply the reviewer ClusterAgentClass
 
@@ -51,8 +52,9 @@ kubectl apply -f trigger.yaml
 
 ### 4. Configure GitHub
 
-On the repository: **Settings → Webhooks → Add webhook** (or extend the
-existing webhook).
+On the repository: **Settings → Webhooks → Add webhook**. Add a new
+webhook, also when the Issues example has one: GitHub sends each webhook
+to one URL.
 
 - **Payload URL:** `https://<your-domain>/github/pull-request`
 - **Content type:** `application/json`
@@ -60,13 +62,11 @@ existing webhook).
 - **Events:** "Let me select individual events" → `Pull requests` only
 - **Active:** ✓
 
-### 5. Create the trigger label
+### 5. Create the labels
 
-```bash
-gh label create conveyor:review --repo acme/widgets \
-  --color ededed \
-  --description "Dispatch to OpenConveyor reviewer"
-```
+Create `conveyor:ready`, `conveyor:review` and `conveyor:iterate` as
+[GitHub labels and webhooks](../README.md#github-labels-and-webhooks)
+shows.
 
 ## Verify
 
@@ -95,10 +95,15 @@ adapter logs for signature errors.
   filters for a test.
 - The egress allowlist of the Task is `api.github.com` + `github.com`.
   The Anthropic endpoint comes from `ClusterAgentClass.spec.requires.egress`.
-- If you label a reviewed PR again, the trigger dispatches a second
-  review. If this matters, add a gate: a workflow that removes the label
-  after the first review. As an alternative, use a one-shot label
-  (`conveyor:review-once`) that you delete before you apply it again.
+- The class dedupes on `openconveyor.ai/pr-number`. While a review of a
+  PR runs, a second label event creates no second review. When you
+  remove and add the label after a review, the trigger starts a new
+  review. The implementer does this on purpose after each iteration
+  ([`github-pr-iterate/`](../github-pr-iterate/)).
+- In the full loop, the implementer and the reviewer often share one
+  `github-token` Secret, and the implementer needs `Contents: Read and
+  write`. To keep the narrow scope for the reviewer, give its class its
+  own Secret.
 
 ## Customising the review
 

@@ -202,8 +202,10 @@ every example. Only the trigger changes.
 
 | Example | Trigger | What it shows |
 |---|---|---|
+| [`phone-workflow-stack/`](examples/phone-workflow-stack/) | GitHub webhooks through Tailscale Funnel | One `make install` for the whole GitHub flow on kind; see the [phone workflow](docs/phone-workflow.md) |
 | [`github-issues-claude-code/`](examples/github-issues-claude-code/) | GitHub Issues webhook | Label an issue, get a PR |
 | [`github-pr-claude-code/`](examples/github-pr-claude-code/) | GitHub Pull Requests webhook | Label a PR, get a review comment |
+| [`github-pr-iterate/`](examples/github-pr-iterate/) | GitHub Pull Requests webhook | Label a PR `conveyor:iterate`, get the review addressed on the same branch |
 | [`linear-claude-code/`](examples/linear-claude-code/) | Linear workflow-state webhook | SaaS tracker as the trigger |
 | [`cronjob-reporter/`](examples/cronjob-reporter/) | Kubernetes CronJob | Scheduled report posted as an issue comment |
 | [`claude-code-slash-dispatch/`](examples/claude-code-slash-dispatch/) | Claude Code `/conveyor` command | Your laptop is the trigger, no server needed |

@@ -1,0 +1,17 @@
+# The reporter reference agent. It requires the Anthropic API and its key;
+# each Task adds the git host and the github-token Secret.
+apiVersion: openconveyor.ai/v1alpha1
+kind: ClusterAgentClass
+metadata:
+  name: claude-code-reporter
+spec:
+  image: ghcr.io/openconveyor/agent-claude-reporteratest
+  imagePullPolicy: IfNotPresent
+  inputs:
+    prompt:
+      mount: /task/prompt
+  requires:
+    egress:
+      - api.anthropic.com
+    secrets:
+      - anthropic-api-key

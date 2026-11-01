@@ -1,0 +1,7 @@
+# The kind overlay: the trigger adapter on NodePort 30090. kind-config.yaml
+# maps the node port to 127.0.0.1:9090 on the host.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - trigger-service.yaml

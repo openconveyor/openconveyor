@@ -10,7 +10,7 @@ This guide describes the two contracts as the code implements them.
 That code is the types in `api/v1alpha1/`, the Job builder in
 `internal/controller/build.go`, the projections in `internal/policy/`
 and the webhook adapter in `internal/trigger/`. The three reference
-agents under `agents/` show the agent contract in use. The five
+agents under `agents/` show the agent contract in use. The six
 examples under `examples/` show the trigger contract in use.
 
 ## Agents
@@ -83,6 +83,14 @@ The controller applies these rules:
 Use the conventional link names `issue` and `pull-request` where they
 fit, so that triggers and bots can read them without agent-specific
 code. You can add other names.
+
+The shared shell library of the reference agents,
+[`agents/common/lib.sh`](../agents/common/lib.sh), is the worked
+example of this contract. `result_write <summary> [name=url ...]`
+writes the file. It removes control characters, drops a link that
+breaks the rules, and keeps the file under 2048 bytes.
+`result_partial` records what the agent has so far. A trap writes it
+on SIGTERM and on an unexpected failure.
 
 Write the file on success and on failure: the controller reads it
 for both, and a Result never changes the phase. On a timeout,
@@ -206,6 +214,15 @@ pattern. An image for OpenConveyor does these things:
 - Copy the entrypoint, set `USER 65532:65532` and `ENV HOME=/tmp`.
 - Set the `ENTRYPOINT` to the script that reads the prompt and exits.
 
+The reference images copy the shared library
+[`agents/common/lib.sh`](../agents/common/lib.sh) to
+`/usr/local/lib/conveyor/lib.sh`. There is no shared base image, so the
+build context is `agents/`:
+
+```sh
+docker build -f agents/claude-code-implementer/Dockerfile agents/
+```
+
 The entrypoint of a reference agent exports each Secret as a variable
 before it calls the tools. It converts the Secret name to upper case
 and replaces `-` with `_`: `anthropic-api-key` becomes
@@ -219,15 +236,18 @@ rule of the controller. Your agent can read the files directly.
 
 A **reference agent** is one of the three agent images that this repo
 ships. Each one is a worked example of the agent contract, not the
-only agent that can run. Each image contains the Claude Code CLI, `git`
-and `gh`. The release workflow pushes them to `ghcr.io` with the same
-tag as the controller image.
+only agent that can run. Each image contains the Claude Code CLI, `git`,
+`gh`, Node.js (from the base image) and the shared library
+[`agents/common/lib.sh`](../agents/common/lib.sh). The release workflow
+pushes them to `ghcr.io` with the same tag as the controller image.
+Each one writes a [Result](#report-a-result) on success and on failure,
+so `Task.status.result` tells what it made or why it stopped.
 
 | Archetype | Image | What it does | Side effect on the git host |
 |---|---|---|---|
-| Implementer | `ghcr.io/openconveyor/agent-claude-implementer` | Clones a repo, sends the prompt to `claude`, commits the diff, and opens a PR. Without a repo, it answers the prompt and exits. | `git push` and `gh pr create` |
-| Reviewer | `ghcr.io/openconveyor/agent-claude-reviewer` | Reads the PR diff with `gh pr diff`, sends the prompt and the diff to `claude`, and posts the review. | `gh pr review` only |
-| Reporter | `ghcr.io/openconveyor/agent-claude-reporter` | Lists PRs and issues with `gh`, sends the prompt and the data to `claude`, and posts the report as a GitHub Issue comment. | `gh issue comment` only |
+| Implementer | `ghcr.io/openconveyor/agent-claude-implementer` | Two modes. **Implement** (no `PR_NUMBER`): reads the issue with `gh`, lets `claude` edit the working tree, then commits, pushes `conveyor/issue-<n>` and opens a PR with `Closes #<n>`. It reuses an open PR of that branch. **Iterate** (`PR_NUMBER` set): checks out the PR and sends the unresolved review threads and the new comments to `claude`. Then it pushes to the same branch and replies on each thread that it addressed. Without a repo, it answers the prompt and exits. Result: a summary, and the `pull-request` and `issue` links. | `git push`, `gh pr create`, PR and issue comments, thread replies, the `conveyor:review` and `conveyor:iterate` labels |
+| Reviewer | `ghcr.io/openconveyor/agent-claude-reviewer` | Reads the PR diff with `gh pr diff`, sends the prompt and the diff to `claude`, and posts the review. Result: the review event and the first line of the review, and the `pull-request` link. | `gh pr review` only |
+| Reporter | `ghcr.io/openconveyor/agent-claude-reporter` | Lists PRs and issues with `gh`, sends the prompt and the data to `claude`, and posts the report as a GitHub Issue comment. Result: the first line of the report, and the `issue` link when the Task sets `REPORT_ISSUE_URL`. | `gh issue comment` only |
 
 The classes for the three archetypes are in
 [`config/samples/`](../config/samples/). All three declare
@@ -252,22 +272,41 @@ a default with `ENV`.
 | Variable | Origin | Agents | Meaning |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Secret `anthropic-api-key` | All three | The `claude` CLI reads it. The entrypoint exports it and does not read it. |
-| `GITHUB_TOKEN` | Secret `github-token` | All three | `gh` reads it. The implementer also stores it in the `git` credential helper for `git push`. The reviewer, and the reporter with a `TARGET_REPO`, exit with an error when it is empty. |
+| `GITHUB_TOKEN` | Secret `github-token` | All three | The library copies it to `GH_TOKEN`, which `gh` reads first, and stores it in the `git` credential helper for `git push`. The reviewer, and the implementer and the reporter with a `TARGET_REPO`, exit with an error when it is empty. |
+| `GH_REPO` | Library | Implementer, Reporter | The `owner/name` form of `TARGET_REPO`, so that `gh` works outside a clone. An explicit value wins. |
+| `GH_PROMPT_DISABLED`, `NO_COLOR` | Image (`1`) | All three | `gh` never prompts and prints no color codes into the logs. |
 | `GITHUB_TOKEN_FILE` | Config | Implementer | A file path. The entrypoint reads the token from this file only when `GITHUB_TOKEN` is empty. |
 | `GIT_HOST` | Image (`github`), Config | Implementer, Reviewer | The git host. Only `github` is valid. Any other value is an error. |
 | `TARGET_REPO` | Config | Implementer, Reporter | Implementer: the git URL to clone, for example `https://github.com/your-org/your-repo.git`. Reporter: the `owner/name` form for `gh`. Without it, the implementer answers the prompt only, and the reporter sends the prompt without repo data. |
-| `TARGET_BRANCH` | Config | Implementer | The branch to clone and the base of the PR. The default is `main`. |
-| `BRANCH_NAME` | Config | Implementer | The name of the branch that the agent pushes. The default is `conveyor/<timestamp>`. |
+| `TARGET_BRANCH` | Config | Implementer | The branch to clone and the base of the PR. The default is `main`. In an empty repository, the implementer creates this branch with an empty first commit. |
+| `ISSUE_NUMBER` | Config | Implementer | Implement mode: the issue to implement. The entrypoint reads its title, body, labels and comments with `gh`, names the branch `conveyor/issue-<n>`, and writes `Closes #<n>` into the PR. Without it, a prompt that is only an issue URL gives the number. |
+| `PR_NUMBER` | Config | Implementer | Selects iterate mode: the PR to update after a review. Without it, a prompt that is only a PR URL gives the number. |
+| `BRANCH_NAME` | Config | Implementer | Implement mode without an issue: the name of the branch that the agent pushes. The default is `conveyor/<timestamp>`. |
 | `PR_URL` | Config | Reviewer | The PR to review. Without it, the entrypoint takes the first `https://<host>/<owner>/<repo>/pull/<n>` URL in the prompt. |
 | `REVIEW_EVENT` | Config | Reviewer | `COMMENT` (the default), `APPROVE` or `REQUEST_CHANGES`. |
 | `REPORT_ISSUE_URL` | Config | Reporter | The GitHub Issue that receives the report as a comment. Without it, the report goes to stdout only. |
-| `PROMPT_FILE`, `SECRETS_ROOT`, `WORKDIR` | Config | All three | Replace the defaults `/task/prompt`, `/run/secrets` and `/tmp/work`. Set them only for a local test of the script. |
+| `PROMPT_FILE`, `SECRETS_ROOT`, `WORKDIR`, `RESULT_FILE`, `CONVEYOR_LIB` | Config | All three | Replace the defaults `/task/prompt`, `/run/secrets`, `/tmp/work`, `/dev/termination-log` and `/usr/local/lib/conveyor/lib.sh`. Set them only for a local test of the script. `make test-agents` runs the entrypoints this way with a fake `gh` and `claude`. |
+
+The implementer entrypoint owns every git and git-host step. The
+prompt tells Claude to leave the changes uncommitted, and
+`--disallowedTools` blocks `git commit`, `git push` and `gh` for Claude.
+When Claude commits anyway, the entrypoint folds the commits back into
+the working tree.
+
+A second, short `claude --print` call turns the diff into a
+Conventional Commit subject, a PR title and a PR body. Without a
+usable answer, the entrypoint uses a fixed text. An empty diff or a
+failed Claude run fails the Task, and the Result says why. The
+`conveyor:review` and `conveyor:iterate` labels must exist on the
+repository.
 
 The reference trigger for GitHub Issues maps `repository.clone_url` to
-`config.TARGET_REPO` and `repository.default_branch` to
-`config.TARGET_BRANCH`. The reviewer trigger maps
-`pull_request.html_url` to the prompt, and the reviewer extracts the
-PR URL from there.
+`config.TARGET_REPO`, `repository.default_branch` to
+`config.TARGET_BRANCH`, and `issue.number` to `config.ISSUE_NUMBER`.
+The iterate trigger maps `pull_request.number` to `config.PR_NUMBER`
+and `pull_request.base.ref` to `config.TARGET_BRANCH`. The reviewer
+trigger maps `pull_request.html_url` to the prompt, and the reviewer
+extracts the PR URL from there.
 
 ### Register the class
 
@@ -325,13 +364,17 @@ this order:
 3. It reads the signing Secret and verifies the HMAC of the body.
 4. It applies the filters. A filter that does not match ends the
    request with no Task.
-5. It builds the Task from the template and the mappings, and creates
-   it with the Kubernetes API.
+5. It builds the Task from the template and the mappings. It adds the
+   label `openconveyor.ai/trigger-class=<class name>`.
+6. When the class sets `spec.dedupe`, it looks for an active Task of
+   the same class with the same `uniqueBy` labels. When it finds one,
+   it creates nothing. See [Dedupe](#dedupe).
+7. It creates the Task with the Kubernetes API.
 
 | Status | Meaning |
 |---|---|
 | `200` | The adapter created a Task. The body names it. |
-| `202` | The signature is valid, but a filter did not match. No Task. |
+| `202` | The signature is valid, but a filter did not match (`{"filtered": true}`), or an active Task for the same subject exists (`{"duplicate": true, "task": "<name>"}`). No Task. |
 | `400` | The body is not JSON, or the mappings produced a Task without a prompt. |
 | `401` | The signature header is missing or does not match. |
 | `404` | No `ClusterTriggerClass` has this path. |
@@ -353,6 +396,9 @@ metadata:
   name: github-issues
 spec:
   path: /github
+  dedupe:
+    uniqueBy:
+      - openconveyor.ai/issue-number
   signature:
     header: X-Hub-Signature-256
     algorithm: sha256
@@ -383,6 +429,13 @@ spec:
     mappings:
       - from: issue.title
         to: prompt
+      - from: issue.number
+        to: config.ISSUE_NUMBER
+      - from: repository.clone_url
+        to: config.TARGET_REPO
+      - from: repository.default_branch
+        to: config.TARGET_BRANCH
+        default: main
       - from: issue.number
         to: labels.openconveyor.ai/issue-number
       - from: sender.login
@@ -444,6 +497,48 @@ instructions in the issue body or the PR body and map that field to
 `prompt`. A `config.<key>` mapping replaces a value with the same key
 in the template `agent.config`.
 
+#### Dedupe
+
+GitHub sends one event for each label change, and it can redeliver an
+event. Without dedupe, each delivery creates a Task, so one issue can
+run two agents at the same time.
+[ADR-0009](adr/0009-dedupe-webhook-tasks-by-label.md) records the rule:
+
+```yaml
+spec:
+  dedupe:
+    uniqueBy:
+      - openconveyor.ai/issue-number
+  task:
+    mappings:
+      - from: issue.number
+        to: labels.openconveyor.ai/issue-number
+```
+
+`uniqueBy` lists one to four label keys. The mappings of the template
+must set these labels. Before the adapter creates a Task, it lists the
+Tasks in the target namespace with the same
+`openconveyor.ai/trigger-class` label and the same values for all
+keys. It reads from the API server, not from a cache.
+
+- A Task that is not terminal blocks the event. An empty phase counts
+  as active. The adapter answers `202 {"duplicate": true, "task":
+  "<name>"}` and counts the metric result `duplicate`.
+- A terminal Task never blocks. Remove and add the label again to
+  start a new run after a run ends.
+- Sometimes a `uniqueBy` label is missing on the built Task, for
+  example when the payload has no issue number. Then the adapter skips
+  the check and creates the Task.
+- Two classes never block each other, because the check includes the
+  class label.
+
+The check is best effort. Two deliveries in one API round trip can
+both create a Task. The label filter stays the primary guard against
+unwanted runs. A class that serves more than one repository can join
+two issues with the same number, so use one class for each repository.
+A class with `spec.dedupe` must have a name of at most 63 characters,
+because the name becomes a label value.
+
 #### Task template
 
 `spec.task` is the prototype of every Task that the class creates.
@@ -451,7 +546,7 @@ in the template `agent.config`.
 | Field | Required | Meaning |
 |---|---|---|
 | `namespace` | No | The namespace of the Tasks. The default is the namespace of the adapter. |
-| `generateNamePrefix` | No | The prefix of the generated Task name. The default is `task-`. A `name` mapping replaces the whole name. |
+| `generateNamePrefix` | No | The prefix of the generated Task name. The API server adds a random suffix. The default is `task-`. A `name` mapping replaces the whole name. |
 | `agent` | Yes | The `ref` and the optional `config`, copied into each Task. |
 | `permissions` | No | `secrets`, `egress`, `egressPorts` and `rbac`, copied into each Task. |
 | `resources` | Yes | `cpu`, `memory` and the mandatory `timeout`, copied into each Task. |
@@ -463,7 +558,7 @@ Helm chart and `config/rbac/` grant it.
 
 ### Examples that ship
 
-The five examples under [`examples/`](../examples/) cover both trigger
+The six examples under [`examples/`](../examples/) cover both trigger
 kinds and all three reference agents:
 
 | Example | Trigger | Agent |
@@ -471,6 +566,7 @@ kinds and all three reference agents:
 | [`github-issues-claude-code/`](../examples/github-issues-claude-code/) | GitHub Issues webhook | Implementer |
 | [`linear-claude-code/`](../examples/linear-claude-code/) | Linear webhook | Implementer |
 | [`github-pr-claude-code/`](../examples/github-pr-claude-code/) | GitHub Pull Requests webhook | Reviewer |
+| [`github-pr-iterate/`](../examples/github-pr-iterate/) | GitHub Pull Requests webhook | Implementer (iterate mode) |
 | [`claude-code-slash-dispatch/`](../examples/claude-code-slash-dispatch/) | Claude Code slash command | Implementer |
 | [`cronjob-reporter/`](../examples/cronjob-reporter/) | Kubernetes CronJob | Reporter |
 

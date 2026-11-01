@@ -52,6 +52,33 @@ spec:
           spec:
             description: spec defines the desired state of ClusterTriggerClass
             properties:
+              dedupe:
+                description: |-
+                  dedupe makes the adapter skip an event when a Task of this class for the
+                  same subject is still active. Without it, every accepted event creates
+                  a Task. The check is best effort: two events that arrive within one API
+                  round trip can both create a Task.
+                properties:
+                  uniqueBy:
+                    description: |-
+                      uniqueBy lists the label keys that identify the subject of an event,
+                      for example "openconveyor.ai/issue-number". The mappings of the Task
+                      template must set these labels. Before the adapter creates a Task, it
+                      looks for a Task of this class with the same values for all keys. When
+                      that Task is not terminal, the adapter creates nothing and answers 202.
+                    items:
+                      maxLength: 317
+                      type: string
+                      x-kubernetes-validations:
+                      - message: must be a valid label key, for example openconveyor.ai/issue-number
+                        rule: self.matches('^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$')
+                    maxItems: 4
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: set
+                required:
+                - uniqueBy
+                type: object
               filters:
                 description: |-
                   filters are the conditions that an event must all satisfy. The adapter
@@ -157,9 +184,9 @@ spec:
                   generateNamePrefix:
                     default: task-
                     description: |-
-                      generateNamePrefix is the text that the adapter puts before a hash of the
-                      event payload to form the Task name. A "name" FieldMapping replaces this
-                      name.
+                      generateNamePrefix is the metadata.generateName of every Task that the
+                      adapter creates. The API server adds a random suffix to form the name.
+                      A "name" FieldMapping replaces this name.
                     type: string
                   mappings:
                     description: mappings populate fields of the created Task from
@@ -331,6 +358,10 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: a ClusterTriggerClass with spec.dedupe must have a name of at most
+            63 characters, because the name is a label value on its Tasks
+          rule: '!has(self.spec.dedupe) || self.metadata.name.size() <= 63'
     served: true
     storage: true
     subresources: {}

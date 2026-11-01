@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Agents:** implementer v2 (#119). Claude no longer opens PRs itself; the
+  entrypoint owns the branch, commit, push and PR. The prompt tells Claude to
+  leave the tree uncommitted and `--disallowedTools` blocks `git commit`,
+  `git push` and `gh`. Implement mode (`ISSUE_NUMBER`, new) reads the issue
+  with `gh`, pushes `conveyor/issue-<n>` (reusing an open PR of that branch),
+  opens the PR with `Closes #<n>` and a footer, comments on the issue, and
+  labels the PR `conveyor:review`; the commit subject, PR title and body come
+  from a second short `claude --print` call. Iterate mode (`PR_NUMBER`, new)
+  checks out the PR, addresses the unresolved review threads and new
+  comments, pushes to the same branch, replies "Addressed in <sha>" on each
+  addressed thread, and moves the `conveyor:iterate`/`conveyor:review`
+  labels. An empty diff or a failed Claude run now fails the Task. An empty
+  repository gets its base branch with an empty first commit. Results carry
+  the `pull-request` and `issue` links.
+
 - **Security:** the egress allowlist now opens **port 443 only** (TCP and
   UDP) on the resolved CIDRs instead of every port. A Task whose agent
   talks to an allowlisted host on another port (SSH to `github.com`, a
@@ -18,6 +33,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Examples:** `examples/phone-workflow-stack/` (#124): one `make install`
+  puts the GitHub flow on a kind cluster: the release `install.yaml` of
+  `VERSION` with the trigger adapter on (strategic merge patch for the flag
+  and the port), the three agent classes pinned to `VERSION`, the three
+  GitHub trigger classes with dedupe, `conveyor-tasks`, one
+  `secretGenerator` per Secret from gitignored files, and a NodePort Service
+  on 30090 for Tailscale Funnel. Scripts check the Secret files (present,
+  mode 600, no trailing newline), create the labels, register the three
+  webhooks idempotently and give an empty repository its first commit. The
+  README lists the manual steps (PAT, Tailscale plan/approval/operator,
+  funnel, re-ping after a cold start).
+- **Examples:** GitHub trigger examples v2 (#122). The issues trigger maps
+  `issue.number` to `config.ISSUE_NUMBER`, uses `issue.html_url` as the
+  fallback prompt and dedupes on `openconveyor.ai/issue-number`; the PR
+  review trigger dedupes on `openconveyor.ai/pr-number`. New
+  `examples/github-pr-iterate/` (`conveyor:iterate` on a PR → implementer in
+  iterate mode, path `/github/pull-request-iterate`, its own webhook). The
+  sample ClusterTriggerClass gains `ISSUE_NUMBER`, `TARGET_REPO`,
+  `TARGET_BRANCH` and dedupe. `examples/README.md` lists the three labels,
+  one webhook per path, and the trailing-newline pitfall of the HMAC secret.
+- **Agents:** shared shell library `agents/common/lib.sh` (#118), copied into
+  each reference image (build context is now `agents/`; no shared base
+  image): secrets export, `GH_TOKEN` and git credential setup, `TARGET_REPO`
+  → `GH_REPO`, `result_write` for the ADR-0008 Result file, and SIGTERM/EXIT
+  traps that write a partial Result. The reviewer reports the review verdict
+  and the `pull-request` link; the reporter reports the first line of the
+  report and the `issue` link. Images set `GH_PROMPT_DISABLED=1` and
+  `NO_COLOR=1`. `make test-agents` runs shellcheck and the entrypoint tests
+  (fake `gh`/`claude`), also in the `Agent Images` workflow.
+- **API/Trigger:** webhook dedupe by label (ADR-0009, #117).
+  `ClusterTriggerClass.spec.dedupe.uniqueBy` lists 1–4 label keys that the
+  mappings set (for example `openconveyor.ai/issue-number`). Before it creates a
+  Task, the adapter lists the Tasks of the same class with the same values
+  through a live API read; when one is not terminal it answers
+  `202 {"duplicate": true, "task": "<name>"}` with the metric result
+  `duplicate` and creates nothing. Terminal Tasks never block. Every
+  adapter-created Task now carries `openconveyor.ai/trigger-class=<class>`.
 - **API/Controller:** Task Result contract (ADR-0008, #116). An agent writes
   strict JSON (`summary`, up to 8 named `links`, at most 2048 bytes) to
   `/dev/termination-log`; the controller validates it as untrusted input and
@@ -96,6 +148,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Docs:** `docs/phone-workflow.md` is now the tutorial for the GitHub flow
+  (#125): issue + `conveyor:ready` → PR with `Closes #N` and a review →
+  comments + `conveyor:iterate` → push to the same branch → merge, with the
+  `gh` equivalent of each tap and a troubleshooting table. Install details
+  moved to the `phone-workflow-stack` README; `README.md` and
+  `examples/README.md` list the stack, which replaces shared prerequisites
+  1–5. `plugin-authoring.md` and `GLOSSARY.md` name three reference agents
+  (the planner is not in v0.4.0).
 - **Docs:** `docs/plugin-authoring.md` is rewritten against the real
   `ClusterAgentClass`, `ClusterTriggerClass` and `Task` schemas: the
   `{from, to, default}` mapping list of the webhook adapter (no

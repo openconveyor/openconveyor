@@ -8,6 +8,8 @@
 #   - $REPORT_ISSUE_URL           optional: the GitHub Issue URL to post the report
 #                                 as a comment. If unset, the report goes to stdout.
 #   - exit 0 = success, non-zero = failure
+#   - /dev/termination-log        the Result (ADR-0008): the first line of the
+#                                 report and the issue link, if any
 #
 # This script never clones a repo and never pushes code. Its only side effect
 # on the git host is an Issue comment that it posts with `gh issue comment`.
@@ -15,26 +17,20 @@
 
 set -euo pipefail
 
-log() { printf '[reporter] %s\n' "$*" >&2; }
-die() { log "error: $*"; exit 1; }
+AGENT_NAME=reporter
+# The shared library: secrets export, GitHub setup, the Result writer and the
+# SIGTERM trap. The Dockerfile copies it from agents/common/lib.sh.
+# shellcheck source-path=SCRIPTDIR source=../common/lib.sh
+. "${CONVEYOR_LIB:-/usr/local/lib/conveyor/lib.sh}"
 
 PROMPT_FILE="${PROMPT_FILE:-/task/prompt}"
-SECRETS_ROOT="${SECRETS_ROOT:-/run/secrets}"
 WORKDIR="${WORKDIR:-/tmp/work}"
 
 [[ -r "$PROMPT_FILE" ]] || die "prompt file $PROMPT_FILE not readable"
 
-# conveyor projects the Secret files at /run/secrets/<name>/<key>. In the
-# common case the Secret has a single key. The loop then exports
-# SECRETNAME_UPPER=contents so that standard CLIs find what they expect
-# (ANTHROPIC_API_KEY, GITHUB_TOKEN, and more).
-if [[ -d "$SECRETS_ROOT" ]]; then
-    while IFS= read -r -d '' file; do
-        name=$(basename "$(dirname "$file")")
-        var=$(printf '%s' "$name" | tr '[:lower:]-' '[:upper:]_')
-        export "$var=$(cat "$file")"
-    done < <(find -L "$SECRETS_ROOT" -mindepth 2 -maxdepth 2 -type f -print0 2>/dev/null || true)
-fi
+secrets_export
+github_setup
+gh_repo_from "${TARGET_REPO:-}"
 
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
@@ -67,15 +63,19 @@ if [[ -n "${TARGET_REPO:-}" ]]; then
 fi
 
 # Send the prompt + context to Claude, which writes a human-readable report.
+# The input goes through a file, so that run_interruptible can pass it to the
+# background job.
+input_file="$WORKDIR/input.md"
 report_file="$WORKDIR/report.md"
-log "running claude"
 {
     printf '%s\n' "$prompt"
     if [[ -s "$context_file" ]]; then
         printf '\n---\n\n# Repository data\n\n'
         cat "$context_file"
     fi
-} | claude --print --permission-mode bypassPermissions > "$report_file"
+} > "$input_file"
+log "running claude"
+run_interruptible claude --print --permission-mode bypassPermissions < "$input_file" > "$report_file"
 
 if [[ ! -s "$report_file" ]]; then
     die "claude produced an empty report"
@@ -92,3 +92,12 @@ else
 fi
 
 cat "$report_file"
+
+# The Result summary is the first line of the report, without Markdown heading
+# marks. The issue link is present only when the report went to an issue.
+first_line=$(grep -m1 -v '^[[:space:]]*$' "$report_file" | sed -E 's/^[#>*[:space:]]+//' || true)
+if [[ -n "${REPORT_ISSUE_URL:-}" ]]; then
+    result_write "$first_line" "issue=$REPORT_ISSUE_URL"
+else
+    result_write "$first_line"
+fi

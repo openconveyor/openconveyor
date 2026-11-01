@@ -91,9 +91,9 @@ type TaskTemplate struct {
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
-	// generateNamePrefix is the text that the adapter puts before a hash of the
-	// event payload to form the Task name. A "name" FieldMapping replaces this
-	// name.
+	// generateNamePrefix is the metadata.generateName of every Task that the
+	// adapter creates. The API server adds a random suffix to form the name.
+	// A "name" FieldMapping replaces this name.
 	// +optional
 	// +kubebuilder:default=task-
 	GenerateNamePrefix string `json:"generateNamePrefix,omitempty"`
@@ -124,6 +124,23 @@ type TaskTemplate struct {
 	Mappings []FieldMapping `json:"mappings,omitempty"`
 }
 
+// TriggerDedupe tells the adapter when an event duplicates a Task that is
+// still active (ADR-0009).
+type TriggerDedupe struct {
+	// uniqueBy lists the label keys that identify the subject of an event,
+	// for example "openconveyor.ai/issue-number". The mappings of the Task
+	// template must set these labels. Before the adapter creates a Task, it
+	// looks for a Task of this class with the same values for all keys. When
+	// that Task is not terminal, the adapter creates nothing and answers 202.
+	// +required
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:MaxLength=317
+	// +kubebuilder:validation:items:XValidation:rule="self.matches('^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$')",message="must be a valid label key, for example openconveyor.ai/issue-number"
+	UniqueBy []string `json:"uniqueBy"`
+}
+
 // ClusterTriggerClassSpec connects an HTTP path on the webhook adapter to a
 // Task template. The adapter validates the signature, applies the filters,
 // and then creates a Task from the template and the payload mappings.
@@ -147,11 +164,19 @@ type ClusterTriggerClassSpec struct {
 	// task is the Task template from which the adapter creates each Task.
 	// +required
 	Task TaskTemplate `json:"task"`
+
+	// dedupe makes the adapter skip an event when a Task of this class for the
+	// same subject is still active. Without it, every accepted event creates
+	// a Task. The check is best effort: two events that arrive within one API
+	// round trip can both create a Task.
+	// +optional
+	Dedupe *TriggerDedupe `json:"dedupe,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:printcolumn:name="Path",type=string,JSONPath=`.spec.path`
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.dedupe) || self.metadata.name.size() <= 63",message="a ClusterTriggerClass with spec.dedupe must have a name of at most 63 characters, because the name is a label value on its Tasks"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // ClusterTriggerClass is the Schema for the clustertriggerclasses API. The

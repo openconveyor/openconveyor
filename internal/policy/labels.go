@@ -19,6 +19,11 @@ const (
 	LabelTaskName  = "openconveyor.ai/task"
 	ManagedByValue = "conveyor"
 	ComponentTask  = "task"
+
+	// LabelTriggerClass names the ClusterTriggerClass whose webhook created
+	// the Task. The webhook adapter sets it on every Task that it creates,
+	// and scopes the dedupe check to it (ADR-0009).
+	LabelTriggerClass = "openconveyor.ai/trigger-class"
 )
 
 // PodSelectorLabels returns the labels that the controller sets on

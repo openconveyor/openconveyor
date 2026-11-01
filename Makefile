@@ -109,6 +109,11 @@ VALE_GLOB ?= !{CHANGELOG.md,CODE_OF_CONDUCT.md,LICENSE,**/zz_generated*,bin/**,d
 lint-docs: vale ## Check prose (Markdown and Go comments) with Vale; warnings only.
 	"$(VALE)" --glob='$(VALE_GLOB)' $(VALE_PATHS)
 
+.PHONY: test-agents
+test-agents: shellcheck ## Run shellcheck and the shell tests of the reference agents.
+	"$(SHELLCHECK)" -x agents/common/lib.sh agents/*/entrypoint.sh agents/*/test/*.sh
+	@set -e; for t in agents/*/test/*_test.sh; do echo "== $$t"; bash "$$t"; done
+
 .PHONY: lint-config
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
@@ -197,6 +202,7 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 VALE ?= $(LOCALBIN)/vale
+SHELLCHECK ?= $(LOCALBIN)/shellcheck
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
@@ -214,6 +220,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
 
 GOLANGCI_LINT_VERSION ?= v2.15.0
 VALE_VERSION ?= v3.25.1
+SHELLCHECK_VERSION ?= v0.10.0
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
@@ -251,6 +258,21 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 vale: $(VALE) ## Download vale locally if necessary.
 $(VALE): $(LOCALBIN)
 	$(call go-install-tool,$(VALE),github.com/vale-cli/vale/v3/cmd/vale,$(VALE_VERSION))
+
+# shellcheck has no Go module, so the target downloads the release archive.
+.PHONY: shellcheck
+shellcheck: $(SHELLCHECK) ## Download shellcheck locally if necessary.
+$(SHELLCHECK): $(LOCALBIN)
+	@[ -f "$(SHELLCHECK)-$(SHELLCHECK_VERSION)" ] || { \
+	set -e; \
+	os=$$(uname -s | tr '[:upper:]' '[:lower:]'); arch=$$(uname -m); \
+	[ "$$arch" = arm64 ] && arch=aarch64; \
+	url="https://github.com/koalaman/shellcheck/releases/download/$(SHELLCHECK_VERSION)/shellcheck-$(SHELLCHECK_VERSION).$$os.$$arch.tar.xz"; \
+	echo "Downloading $$url"; \
+	curl -sSfL "$$url" | tar -xJ -O "shellcheck-$(SHELLCHECK_VERSION)/shellcheck" > "$(SHELLCHECK)-$(SHELLCHECK_VERSION)"; \
+	chmod +x "$(SHELLCHECK)-$(SHELLCHECK_VERSION)"; \
+	} ;\
+	ln -sf "$$(realpath "$(SHELLCHECK)-$(SHELLCHECK_VERSION)")" "$(SHELLCHECK)"
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

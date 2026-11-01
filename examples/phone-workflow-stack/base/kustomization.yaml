@@ -1,0 +1,21 @@
+# The phone-workflow stack: the released controller with the trigger adapter
+# on, the three reference agent classes, the three GitHub trigger classes,
+# the Task namespace and the Secrets.
+#
+# release/ holds the version-dependent part. `make` writes
+# release/kustomization.yaml from VERSION (the install.yaml URL and the agent
+# image tags), so run `make check` or `make install`, not `kubectl apply -k`
+# on a fresh checkout.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - release
+  - namespace.yaml
+  - ../../github-issues-claude-code
+  - ../../github-pr-claude-code
+  - ../../github-pr-iterate
+  - ../secrets
+patches:
+  # A strategic merge patch, not a JSON patch: kustomize drops the empty
+  # `ports: []` of the manager, so a JSON patch "add .../ports/-" fails.
+  - path: manager-trigger-patch.yaml

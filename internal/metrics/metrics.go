@@ -23,6 +23,10 @@ const (
 	// ResultAccepted means the webhook matched a ClusterTriggerClass, passed
 	// the signature check and the filters, and the handler created a Task.
 	ResultAccepted = "accepted"
+	// ResultDuplicate means the request passed the filters, but a Task of the
+	// same class with the same dedupe labels is still active (ADR-0009). The
+	// adapter created nothing.
+	ResultDuplicate = "duplicate"
 	// ResultFiltered means the request matched a CTC with a valid signature,
 	// but the filters excluded it. This is not an error.
 	ResultFiltered = "filtered"
