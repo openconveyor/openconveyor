@@ -15,6 +15,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -37,7 +38,15 @@ const (
 	reasonEgressResolveFail = "EgressResolveFailed"
 )
 
-func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.Task, job *batchv1.Job) error {
+// syncStatus copies the Job state and the agent Result onto the Task and
+// writes the status when it changed. It returns the delay after which the
+// Result read needs another reconcile, or zero.
+func (r *TaskReconciler) syncStatus(
+	ctx context.Context,
+	task *conveyorv1alpha1.Task,
+	job *batchv1.Job,
+	egress []string,
+) (time.Duration, error) {
 	log := logf.FromContext(ctx)
 	before := task.Status.DeepCopy()
 
@@ -57,10 +66,23 @@ func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.
 		ObservedGeneration: task.Generation,
 	})
 
-	if equalStatus(before, &task.Status) {
-		return nil
+	// The Result read runs after the phase, so a Task that becomes terminal
+	// in this pass waits for its pod from now on.
+	requeue, err := r.observeResult(ctx, task, job.UID, egress)
+	if err != nil {
+		return 0, err
 	}
 
+	if equalStatus(before, &task.Status) {
+		return requeue, nil
+	}
+
+	// Write first, then report. A conflict on the write requeues the
+	// reconcile, and an Event or a metric before the write would then
+	// count the same transition twice.
+	if err := r.Status().Update(ctx, task); err != nil {
+		return 0, err
+	}
 	if before.Phase != phase {
 		log.Info("Task phase transitioned", "from", before.Phase, "to", phase, "reason", reason)
 		metrics.ObservePhaseTransition(string(phase), reason)
@@ -70,8 +92,7 @@ func (r *TaskReconciler) syncStatus(ctx context.Context, task *conveyorv1alpha1.
 			metrics.ObserveTaskDuration(string(phase), dur)
 		}
 	}
-
-	return r.Status().Update(ctx, task)
+	return requeue, nil
 }
 
 // eventActionReconcile is the events.k8s.io/v1 `action` on every Event
@@ -180,11 +201,14 @@ func (r *TaskReconciler) markInvalid(ctx context.Context, task *conveyorv1alpha1
 		Message:            msg,
 		ObservedGeneration: task.Generation,
 	})
+	if err := r.Status().Update(ctx, task); err != nil {
+		return err
+	}
 	if prevPhase != conveyorv1alpha1.TaskPhaseFailed {
 		metrics.ObservePhaseTransition(string(conveyorv1alpha1.TaskPhaseFailed), reason)
 		r.recordEvent(task, corev1.EventTypeWarning, reason, invalidEventMessage(reason, msg))
 	}
-	return r.Status().Update(ctx, task)
+	return nil
 }
 
 // invalidEventMessage prefixes an error string with a sentence that
@@ -218,10 +242,13 @@ func (r *TaskReconciler) markWaitingForAgentClass(ctx context.Context, task *con
 	if equalStatus(before, &task.Status) {
 		return nil
 	}
+	if err := r.Status().Update(ctx, task); err != nil {
+		return err
+	}
 	// A Task that cannot start until someone creates the class needs
 	// action, so the Event type is Warning rather than Normal.
 	r.recordEvent(task, corev1.EventTypeWarning, reasonAgentClassMissing, msg)
-	return r.Status().Update(ctx, task)
+	return nil
 }
 
 // deletionDeadline returns the time at which a terminal Task becomes
@@ -265,6 +292,9 @@ func equalStatus(a, b *conveyorv1alpha1.TaskStatus) bool {
 		return false
 	}
 	if !timesEqual(a.StartTime, b.StartTime) || !timesEqual(a.CompletionTime, b.CompletionTime) {
+		return false
+	}
+	if !apiequality.Semantic.DeepEqual(a.Result, b.Result) {
 		return false
 	}
 	if len(a.Conditions) != len(b.Conditions) {

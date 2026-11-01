@@ -536,6 +536,9 @@ var _ = Describe("Task Controller", func() {
 		It("stops requeueing once the Task is terminal", func() {
 			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("api.example.com")))).To(Succeed())
 			r := refreshing(map[string][]string{"api.example.com": {"203.0.113.10"}})
+			// envtest has no agent pod. Without the wait for the pod, the
+			// Result is Unavailable at once and adds no requeue of its own.
+			r.ResultWait = time.Nanosecond
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -576,7 +579,10 @@ var _ = Describe("Task Controller", func() {
 
 		// finish creates the Task, reconciles it into a Job, fails the Job and
 		// reconciles once more so the Task reaches the terminal Failed phase.
+		// envtest has no agent pod, so finish also turns off the wait for the
+		// pod: the Result is Unavailable at once, and only the TTL requeues.
 		finish := func(r *TaskReconciler, opts ...func(*conveyorv1alpha1.Task)) {
+			r.ResultWait = time.Nanosecond
 			ExpectWithOffset(1, k8sClient.Create(ctx, newTask(taskName, taskNamespace, opts...))).To(Succeed())
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
@@ -1172,6 +1178,40 @@ var _ = Describe("Task Controller", func() {
 			Expect(recordedEvents()).To(ConsistOf("Warning Failed Job failed"))
 		})
 
+		It("emits no Event when the status write conflicts, and one Event on the retry", func() {
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace))).To(Succeed())
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			_ = recordedEvents()
+
+			By("failing the Job")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Failed = 1
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+				batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+
+			By("writing the Task status from a stale copy")
+			var stale, fresh conveyorv1alpha1.Task
+			Expect(k8sClient.Get(ctx, taskKey, &stale)).To(Succeed())
+			Expect(k8sClient.Get(ctx, taskKey, &fresh)).To(Succeed())
+			fresh.Status.ObservedGeneration++
+			Expect(k8sClient.Status().Update(ctx, &fresh)).To(Succeed())
+			_, err = reconciler().syncStatus(ctx, &stale, &job, nil)
+			Expect(apierrors.IsConflict(err)).To(BeTrue(), "expected a conflict, got: %v", err)
+			Expect(recordedEvents()).To(BeEmpty(), "a failed write must not emit an Event")
+
+			By("retrying, as controller-runtime does after the conflict")
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(recordedEvents()).To(ConsistOf("Warning Failed Job failed"))
+		})
+
 		It("emits a Warning when the egress allowlist cannot be resolved", func() {
 			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("api.example.com")))).To(Succeed())
 			broken := reconciler()
@@ -1208,6 +1248,257 @@ var _ = Describe("Task Controller", func() {
 			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(recordedEvents()).To(BeEmpty(), "the periodic requeue must not spam Events")
+		})
+	})
+
+	Context("Result — the agent reports through its termination message (ADR-0008)", func() {
+		const podName = taskName + "-agent"
+		prURL := "https://api.example.com/acme/repo/pull/7"
+
+		// resultReconciler is the suite reconciler with a custom wait for the
+		// agent pod of a terminal Task.
+		resultReconciler := func(wait time.Duration) *TaskReconciler {
+			r := reconciler()
+			r.ResultWait = wait
+			return r
+		}
+
+		// setJobCondition marks the live Job finished with the given
+		// condition, as the Job controller does.
+		setJobCondition := func(condType batchv1.JobConditionType, reason string) {
+			var job batchv1.Job
+			ExpectWithOffset(1, k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			if condType == batchv1.JobComplete {
+				job.Status.CompletionTime = &now
+				job.Status.Succeeded = 1
+				job.Status.Conditions = append(job.Status.Conditions,
+					batchv1.JobCondition{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue})
+			} else {
+				job.Status.Failed = 1
+				job.Status.Conditions = append(job.Status.Conditions,
+					batchv1.JobCondition{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: reason})
+			}
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{Type: condType, Status: corev1.ConditionTrue, Reason: reason})
+			ExpectWithOffset(1, k8sClient.Status().Update(ctx, &job)).To(Succeed())
+		}
+
+		// createAgentPod creates the agent pod that the Job controller would
+		// create. envtest has no kubelet, so the spec writes the terminated
+		// container status itself. A pod without the Job as its controller
+		// stands in for a pod that someone else labels with the Task name.
+		createAgentPod := func(message string, ownedByJob bool) {
+			var job batchv1.Job
+			ExpectWithOffset(1, k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      podName,
+					Namespace: taskNamespace,
+					Labels:    map[string]string{policy.LabelTaskName: taskName, policy.LabelManagedBy: policy.ManagedByValue},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: agentContainerName, Image: "busybox:1.36"}},
+				},
+			}
+			if ownedByJob {
+				pod.OwnerReferences = []metav1.OwnerReference{{
+					APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: new(true),
+				}}
+			}
+			ExpectWithOffset(1, k8sClient.Create(ctx, pod)).To(Succeed())
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, pod, client.GracePeriodSeconds(0))
+				Eventually(func() bool {
+					return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), &corev1.Pod{}))
+				}, eventuallyTimeout, eventuallyPoll).Should(BeTrue())
+			})
+			pod.Status.Phase = corev1.PodSucceeded
+			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+				Name:  agentContainerName,
+				Image: "busybox:1.36",
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+					ExitCode: 0, Reason: "Completed", Message: message,
+				}},
+			}}
+			ExpectWithOffset(1, k8sClient.Status().Update(ctx, pod)).To(Succeed())
+		}
+
+		reconcileTask := func(r *TaskReconciler) (reconcile.Result, conveyorv1alpha1.Task) {
+			res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: taskKey})
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+			var got conveyorv1alpha1.Task
+			ExpectWithOffset(1, k8sClient.Get(ctx, taskKey, &got)).To(Succeed())
+			return res, got
+		}
+
+		resultConditionOf := func(task *conveyorv1alpha1.Task) *metav1.Condition {
+			return meta.FindStatusCondition(task.Status.Conditions, conditionResult)
+		}
+
+		BeforeEach(func() {
+			By("creating a Task with an egress allowlist and reconciling it into a Job")
+			Expect(k8sClient.Create(ctx, newTask(taskName, taskNamespace, withEgress("api.example.com")))).To(Succeed())
+			reconcileTask(reconciler())
+		})
+
+		It("sets the termination message path and the File policy on the agent container", func() {
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			c := job.Spec.Template.Spec.Containers[0]
+			Expect(c.TerminationMessagePath).To(Equal("/dev/termination-log"))
+			Expect(c.TerminationMessagePolicy).To(Equal(corev1.TerminationMessageReadFile))
+		})
+
+		It("records the Result of a Completed Task", func() {
+			setJobCondition(batchv1.JobComplete, "")
+			createAgentPod(`{"summary":"Opened a PR","links":[{"name":"pull-request","url":"`+prURL+`"}]}`, true)
+
+			_, got := reconcileTask(reconciler())
+			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseCompleted))
+			Expect(got.Status.Result).NotTo(BeNil())
+			Expect(got.Status.Result.Summary).To(Equal("Opened a PR"))
+			Expect(got.Status.Result.Links).To(ConsistOf(conveyorv1alpha1.ResultLink{Name: "pull-request", URL: prURL}))
+			cond := resultConditionOf(&got)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal(reasonResultRecorded))
+		})
+
+		It("records the Result of a Failed Task and keeps the phase", func() {
+			setJobCondition(batchv1.JobFailed, "BackoffLimitExceeded")
+			createAgentPod(`{"summary":"Tests failed"}`, true)
+
+			_, got := reconcileTask(reconciler())
+			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseFailed))
+			Expect(readyConditionOf(&got).Reason).To(Equal(reasonFailed))
+			Expect(got.Status.Result.Summary).To(Equal("Tests failed"))
+			Expect(resultConditionOf(&got).Reason).To(Equal(reasonResultRecorded))
+		})
+
+		It("records the Result while the Job has not finished yet", func() {
+			createAgentPod(`{"summary":"partial"}`, true)
+
+			_, got := reconcileTask(reconciler())
+			Expect(isTerminal(got.Status.Phase)).To(BeFalse())
+			Expect(got.Status.Result.Summary).To(Equal("partial"))
+			Expect(resultConditionOf(&got).Reason).To(Equal(reasonResultRecorded))
+		})
+
+		It("drops a link to a host outside the allowlist and never copies the message", func() {
+			secret := "ghp_LEAKEDTOKEN"
+			setJobCondition(batchv1.JobComplete, "")
+			createAgentPod(`{"summary":"x","links":[{"name":"pull-request","url":"`+prURL+`"},`+
+				`{"name":"exfil","url":"https://evil.example.net/`+secret+`"}]}`, true)
+
+			_, got := reconcileTask(reconciler())
+			Expect(got.Status.Result.Links).To(ConsistOf(conveyorv1alpha1.ResultLink{Name: "pull-request", URL: prURL}))
+			cond := resultConditionOf(&got)
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(reasonResultInvalid))
+			for _, c := range got.Status.Conditions {
+				Expect(c.Message).NotTo(ContainSubstring(secret))
+			}
+			for _, e := range recordedEvents() {
+				Expect(e).NotTo(ContainSubstring(secret))
+			}
+		})
+
+		It("records Invalid and no Result for a message that is not strict JSON", func() {
+			setJobCondition(batchv1.JobComplete, "")
+			createAgentPod(`{"summary":"x","extra":true}`, true)
+
+			_, got := reconcileTask(reconciler())
+			Expect(got.Status.Result).To(BeNil())
+			Expect(resultConditionOf(&got).Reason).To(Equal(reasonResultInvalid))
+		})
+
+		It("records NotProvided for an empty termination message", func() {
+			setJobCondition(batchv1.JobComplete, "")
+			createAgentPod("", true)
+
+			_, got := reconcileTask(reconciler())
+			Expect(got.Status.Result).To(BeNil())
+			cond := resultConditionOf(&got)
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(reasonResultNotProvided))
+		})
+
+		It("ignores a labeled pod that the Job does not control", func() {
+			setJobCondition(batchv1.JobComplete, "")
+			createAgentPod(`{"summary":"forged"}`, false)
+
+			res, got := reconcileTask(reconciler())
+			Expect(got.Status.Result).To(BeNil())
+			Expect(resultConditionOf(&got)).To(BeNil())
+			Expect(res.RequeueAfter).To(Equal(resultRequeue))
+		})
+
+		It("requeues a terminal Task while its pod is absent, then records Unavailable", func() {
+			setJobCondition(batchv1.JobComplete, "")
+
+			res, got := reconcileTask(resultReconciler(time.Hour))
+			Expect(got.Status.Phase).To(Equal(conveyorv1alpha1.TaskPhaseCompleted))
+			Expect(resultConditionOf(&got)).To(BeNil())
+			Expect(res.RequeueAfter).To(Equal(resultRequeue))
+
+			By("reconciling the terminal Task after the wait")
+			res, got = reconcileTask(resultReconciler(time.Nanosecond))
+			Expect(res.RequeueAfter).To(BeZero())
+			cond := resultConditionOf(&got)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(reasonResultUnavailable))
+
+			By("not reading again once the condition is set")
+			res, _ = reconcileTask(resultReconciler(time.Hour))
+			Expect(res.RequeueAfter).To(BeZero())
+		})
+
+		It("records the Result on the terminal path when the pod arrives late", func() {
+			setJobCondition(batchv1.JobComplete, "")
+			reconcileTask(resultReconciler(time.Hour))
+
+			createAgentPod(`{"summary":"late"}`, true)
+			_, got := reconcileTask(resultReconciler(time.Hour))
+			Expect(got.Status.Result.Summary).To(Equal("late"))
+			Expect(resultConditionOf(&got).Reason).To(Equal(reasonResultRecorded))
+		})
+
+		It("records Unavailable when the Job is gone before the read", func() {
+			setJobCondition(batchv1.JobComplete, "")
+			reconcileTask(resultReconciler(time.Hour))
+
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, taskKey, &job)).To(Succeed())
+			propagation := metav1.DeletePropagationBackground
+			Expect(k8sClient.Delete(ctx, &job, &client.DeleteOptions{PropagationPolicy: &propagation})).To(Succeed())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, taskKey, &batchv1.Job{}))
+			}, eventuallyTimeout, eventuallyPoll).Should(BeTrue())
+
+			_, got := reconcileTask(resultReconciler(time.Hour))
+			Expect(resultConditionOf(&got).Reason).To(Equal(reasonResultUnavailable))
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, taskKey, &batchv1.Job{}))).To(BeTrue(),
+				"the Result read must not recreate the Job")
+		})
+	})
+
+	Context("Pod events — mapping back to the Task", func() {
+		It("enqueues the Task named in the label of a conveyor pod", func() {
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Labels: map[string]string{
+				policy.LabelTaskName: "t", policy.LabelManagedBy: policy.ManagedByValue,
+			}}}
+			Expect(taskForPod(ctx, pod)).To(ConsistOf(reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "t", Namespace: "ns"},
+			}))
+		})
+
+		It("ignores a pod without the conveyor labels", func() {
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Labels: map[string]string{
+				policy.LabelTaskName: "t",
+			}}}
+			Expect(taskForPod(ctx, pod)).To(BeEmpty())
 		})
 	})
 

@@ -129,7 +129,7 @@ values does something that we forbid on purpose.
 
 The manager's own ClusterRole comes from `+kubebuilder:rbac` markers
 (`internal/controller/task_controller.go`,
-`internal/trigger/handler.go`). Two entries need an explanation:
+`internal/trigger/handler.go`). Three entries need an explanation:
 
 - **`secrets` / `get`, cluster-wide.** Only the trigger adapter
   (ADR-0006) uses it, to read the HMAC key that a `ClusterTriggerClass`
@@ -139,6 +139,30 @@ The manager's own ClusterRole comes from `+kubebuilder:rbac` markers
   beyond one lookup. There is no `list` or `watch` verb.
 - **`clustertriggerclasses` / `get;list;watch`.** The webhook adapter
   uses it for route discovery. The informer cache serves it.
+- **`pods` / `get;list;watch`, cluster-wide.** The Task controller
+  reads the termination message of the agent container, which carries
+  the Result (ADR-0008). The Pod informer selects only pods with the
+  `openconveyor.ai/task` label and `app.kubernetes.io/managed-by=conveyor`
+  (`cmd/main.go`), so the cache holds only Task pods. A ClusterRole rule
+  has no label selector, so the RBAC scope is all pods. There is no
+  `pods/log` verb and no write verb.
+
+Guarantees 1 to 4 do not change for the Result. The agent writes one
+file that the kubelet owns, and needs no token, no egress and no
+mount for it. The controller treats the message as untrusted input:
+
+- It reads only a pod that the Job of the Task controls.
+- It parses strict JSON of at most 2048 bytes with unknown fields
+  rejected.
+- It keeps a link only when the URL is `https` and the host is in the
+  effective egress allowlist of the Task.
+- It never copies the raw message into a condition, an Event or a log
+  line. A Task is readable by more subjects than its pod.
+- The Job sets `terminationMessagePolicy: File` explicitly.
+  `FallbackToLogsOnError` copies log lines, which can hold a token that
+  a tool printed, into the pod status.
+- The manager refuses `--job-ttl-seconds=0`, because Kubernetes can
+  then delete the pod before the controller reads it.
 
 ## Threat model
 

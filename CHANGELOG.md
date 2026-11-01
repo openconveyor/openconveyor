@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **API/Controller:** Task Result contract (ADR-0008, #116). An agent writes
+  strict JSON (`summary`, up to 8 named `links`, at most 2048 bytes) to
+  `/dev/termination-log`; the controller validates it as untrusted input and
+  stores it in `status.result` with a new `Result` condition (`Recorded`,
+  `Invalid`, `NotProvided`, `Unavailable`). Links must be `https` to a host
+  in the Task's egress allowlist. The Job sets `terminationMessagePolicy:
+  File`, the manager ClusterRole gains `pods` `get;list;watch` with a
+  label-restricted Pod informer, `--job-ttl-seconds=0` is refused at
+  startup, and `kubectl get task -o wide` shows a `Summary` column.
 - **API:** `kubectl get clusteragentclasses` shows an `Image` column
   (`.spec.image`) and `kubectl get clustertriggerclasses` shows a `Path`
   column (`.spec.path`), before `Age`. (#18)

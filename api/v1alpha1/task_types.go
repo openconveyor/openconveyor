@@ -206,6 +206,13 @@ type TaskStatus struct {
 	// +optional
 	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
 
+	// result is the outcome that the agent reported through its container
+	// termination message (ADR-0008). The controller validates the message
+	// and copies only the accepted fields. The result never changes the
+	// phase. The "Result" condition tells why this field is empty.
+	// +optional
+	Result *TaskResult `json:"result,omitempty"`
+
 	// conditions report the reconciler state in the form that the Kubernetes
 	// API conventions define.
 	// +listType=map
@@ -214,12 +221,50 @@ type TaskStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// TaskResult is the small, structured outcome that an agent reports when it
+// exits. The agent writes the same shape as strict JSON, at most 2048 bytes,
+// to /dev/termination-log.
+type TaskResult struct {
+	// summary is one line of plain text about the outcome. The controller
+	// removes control characters and cuts the text to 512 characters.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	Summary string `json:"summary,omitempty"`
+
+	// links is the list of URLs to what the agent made, each with a name,
+	// for example the pull request. The conventional names are "issue" and
+	// "pull-request". The controller keeps a link only when its URL uses
+	// https and its host is in the egress allowlist of the Task.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=8
+	Links []ResultLink `json:"links,omitempty"`
+}
+
+// ResultLink is one named URL in a TaskResult.
+type ResultLink struct {
+	// name identifies the link, in kebab-case, for example "pull-request".
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=32
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]+(-[a-z0-9]+)*$`
+	Name string `json:"name"`
+
+	// url is an https URL whose host is in the egress allowlist of the Task.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
+	URL string `json:"url"`
+}
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Agent",type=string,JSONPath=`.spec.agent.ref`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Started",type=date,JSONPath=`.status.startTime`,priority=1
 // +kubebuilder:printcolumn:name="Completed",type=date,JSONPath=`.status.completionTime`,priority=1
+// +kubebuilder:printcolumn:name="Summary",type=string,JSONPath=`.status.result.summary`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Task is one requested run of an agent. The controller creates a

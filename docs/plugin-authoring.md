@@ -28,6 +28,7 @@ in a one-shot Job. The container finds its inputs at fixed locations:
 | Scratch space | `/tmp`, an `emptyDir` volume | The root filesystem rejects writes. Write all state under `/tmp`. |
 | Network | The egress allowlist of the Task and of the class | Without entries, the NetworkPolicy denies all egress. The allowlist opens port 443 by default, plus DNS on port 53. |
 | Kubernetes API | No ServiceAccount token unless `Task.spec.permissions.rbac` has rules | Do not assume that the agent can call the Kubernetes API. |
+| Result | The agent writes to `/dev/termination-log` | Optional. See [Report a Result](#report-a-result). |
 
 The Job runs the container as UID and GID 65532, with `runAsNonRoot`,
 the `RuntimeDefault` seccomp profile, no privilege escalation and no
@@ -48,6 +49,47 @@ An agent obeys these rules:
    is the only log channel.
 5. Keep all writable state under `/tmp`. Set `HOME=/tmp` in the image
    when the tools need a home directory.
+
+### Report a Result
+
+An agent can report a **Result**: a short summary and named links to
+what it made. Write it as one strict JSON object to
+`/dev/termination-log` before you exit. The kubelet copies the file
+into the pod status, and the controller copies the validated fields to
+`Task.status.result` ([ADR-0008](adr/0008-task-result-through-termination-message.md)).
+The file is writable on the read-only root filesystem, and it needs no
+token and no egress.
+
+```json
+{
+  "summary": "Opened a pull request for issue #42",
+  "links": [
+    {"name": "pull-request", "url": "https://github.com/acme/repo/pull/43"},
+    {"name": "issue", "url": "https://github.com/acme/repo/issues/42"}
+  ]
+}
+```
+
+The controller applies these rules:
+
+| Rule | Limit |
+|---|---|
+| File size | At most 2048 bytes. A larger object gives the reason `Invalid`. |
+| Fields | `summary` and `links` only. An unknown field gives `Invalid`. |
+| `summary` | Plain text. The controller removes control characters and keeps 512 characters. |
+| `links` | At most 8 entries. Each `name` is kebab-case, at most 32 characters, and unique. |
+| Link URL | `https`, no user name or password, and a host in the egress allowlist of the Task (the Task entries plus the class entries). The controller drops a link that breaks a rule and sets `Invalid`. |
+
+Use the conventional link names `issue` and `pull-request` where they
+fit, so that triggers and bots can read them without agent-specific
+code. You can add other names.
+
+Write the file on success and on failure: the controller reads it
+for both, and a Result never changes the phase. On a timeout,
+Kubernetes sends SIGTERM and waits 30 seconds. An agent that traps
+SIGTERM can write a partial Result in that time. The `Result`
+condition reports what the controller found; see
+[`status-reference.md`](status-reference.md#the-result-condition).
 
 ### ClusterAgentClass
 
