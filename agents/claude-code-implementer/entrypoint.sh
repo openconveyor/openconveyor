@@ -449,7 +449,11 @@ process.stdout.write(threads.length + " " + notes.length);
     fi
 
     clone_repo "${TARGET_BRANCH:-$base_ref}"
-    gh pr checkout "$pr" >/dev/null 2>&1 || die "gh pr checkout $pr failed"
+    # The shallow clone fetches the base branch only. gh pr checkout sets up
+    # tracking for origin/<head>, and git refuses that unless the fetch
+    # refspec covers the branch.
+    git config --add remote.origin.fetch "+refs/heads/$head_ref:refs/remotes/origin/$head_ref"
+    gh pr checkout "$pr" >&2 || die "gh pr checkout $pr failed"
     base_sha=$(git rev-parse HEAD)
 
     local addressed_file="$WORKDIR/addressed-threads"

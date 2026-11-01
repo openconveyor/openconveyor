@@ -21,8 +21,11 @@ case "$1 $2" in
 "pr edit"|"pr comment") ;;
 "pr view") cat "$TMP/pr.json" ;;
 "pr checkout")
+    # Like the real gh: fetch the head and track origin/<head>. git refuses
+    # the tracking when the fetch refspec of the clone does not cover it.
     head=$(cat "$TMP/pr-head")
-    git fetch -q origin "$head" && git checkout -q -B "$head" FETCH_HEAD ;;
+    git fetch -q origin "+refs/heads/$head:refs/remotes/origin/$head" \
+        && git checkout -q -b "$head" --track "origin/$head" ;;
 "api graphql") cat "$TMP/threads.jsonl" ;;
 "api -X") ;;
 *) echo "fake gh: unexpected call: $*" >&2; exit 2 ;;
