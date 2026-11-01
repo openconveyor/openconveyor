@@ -80,6 +80,38 @@ There is one condition type, `Ready`. Its `status` follows the phase:
 condition whose `observedGeneration` is behind the object's generation
 describes an older spec.
 
+## The `Result` condition
+
+The `Result` condition tells what the controller found in the
+termination message of the agent container (ADR-0008). The
+`status.result` field holds the accepted data. The Result never
+changes the phase: a `Completed` Task and a `Failed` Task can both
+carry one.
+
+<!-- vale STE.Passive = NO -->
+| Reason | Status | `status.result` | Set when |
+|---|---|---|---|
+| `Recorded` | `True` | Set | The message held a valid Result, and the controller kept all of it |
+| `Invalid` | `False` | Set or empty | The message broke the contract: not strict JSON, unknown fields, larger than 2048 bytes, or the controller dropped one or more links. The controller keeps the valid summary and links |
+| `NotProvided` | `False` | Empty | The message was empty, held no JSON object, or held an empty object |
+| `Unavailable` | `False` | Empty | The pod or its Job disappeared before the controller read the message. Or the container did not terminate in the two minutes after the Task became terminal |
+<!-- vale STE.Passive = YES -->
+
+The condition message is a fixed sentence. It names the rule that
+the message broke, but it never contains text from the message.
+
+The controller reads the message once. When the condition exists,
+the controller does not read the pod again. A Task that never ran a
+Job (`InvalidSpec`, `EgressResolveFailed`) has no `Result` condition.
+When a terminal Task has no `Result` condition, the controller still
+waits for the pod. It looks again every 5 seconds, and the Pod watch
+wakes it earlier.
+
+A `TimedOut` Task carries a Result only as a bonus. The Job controller
+deletes the pod at the deadline. The agent can write a partial Result
+in the SIGTERM grace period, and the controller records it when it
+catches the last pod update. Otherwise the reason is `Unavailable`.
+
 ## Other status fields
 
 | Field | Meaning |
@@ -88,6 +120,8 @@ describes an older spec.
 | `startTime` | Copied from the Job: when its first pod started |
 | `completionTime` | Copied from the Job: when it finished, success or failure. Not set for `InvalidSpec` / `EgressResolveFailed`, which never ran a Job; the GC falls back to the `Ready` transition time |
 | `observedGeneration` | Last `metadata.generation` reconciled |
+| `result.summary` | One line of plain text from the agent, at most 512 characters. `kubectl get task -o wide` shows it in the `Summary` column |
+| `result.links` | Up to 8 `{name, url}` entries. The conventional names are `issue` and `pull-request` |
 
 ## Events
 
@@ -114,13 +148,17 @@ kubectl get task <name> -o jsonpath='{.status.phase}{"\t"}{.status.conditions[?(
 
 # Everything that happened, in order.
 kubectl describe task <name>
+
+# The pull request that the agent reported, if any.
+kubectl get task <name> -o jsonpath='{.status.result.links[?(@.name=="pull-request")].url}{"\n"}'
 ```
 
 From code, read the `Ready` condition with
 `meta.FindStatusCondition(task.Status.Conditions, "Ready")` and branch
-on `Reason`. Treat `Status != Unknown` as final. Do not poll a terminal
-Task: it does not change, and if it has a TTL the controller deletes
-it.
+on `Reason`. Treat `Status != Unknown` as final. To wait for the
+Result too, wait until the `Result` condition exists. After that, do
+not poll a terminal Task: it does not change, and if it has a TTL the
+controller deletes it.
 
 Prometheus: `conveyor_task_phase_transitions_total{phase,reason}`
 counts the same transitions; see `internal/metrics/`.

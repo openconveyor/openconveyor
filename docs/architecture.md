@@ -23,6 +23,7 @@ flowchart TD
     cm --> job[ensureJob]
     job --> sync[syncStatus]
     sync --> phase[derivePhase]
+    phase --> result["observeResult (agent pod)"]
 ```
 
 The steps behave as follows:
@@ -36,6 +37,10 @@ The steps behave as follows:
 - `ensureJob` writes a hardened PodSpec. The Job is immutable after
   the create.
 - `syncStatus` calls `derivePhase`, which reads the Job conditions.
+  Then `observeResult` reads the termination message of the agent pod
+  and records the Result (ADR-0008). For a terminal Task, the
+  reconciler only completes the Result and collects the Task after its
+  TTL.
 
 The order matters. The controller creates the NetworkPolicy before the
 Job, so the CNI has the policy in place before the scheduler places the
@@ -54,6 +59,8 @@ default-allow window before they apply the policy.
 | Role + RoleBinding | `internal/policy/rbac.go` |
 | Secret volume projection | `internal/policy/secrets.go` |
 | Shared labels | `internal/policy/labels.go` |
+| Result parser (pure) | `internal/policy/result.go` |
+| Result read from the agent pod | `internal/controller/result.go` |
 | Manager entrypoint | `cmd/main.go` |
 
 The policy package is pure by design. It does no cluster I/O, except
@@ -122,7 +129,8 @@ API, never the controller directly:
   custom scripts) have no code on the OpenConveyor side.
 - **Agents** are plain container images that a `ClusterAgentClass`
   references. The contract is "read the prompt at `/task/prompt`, exit
-  with the right code." Each other behavior is specific to the agent.
+  with the right code", plus an optional Result in
+  `/dev/termination-log`. Each other behavior is specific to the agent.
 
 By design, a new trigger or a new agent never requires a change in
 `internal/`. [`plugin-authoring.md`](plugin-authoring.md) describes
