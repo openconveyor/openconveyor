@@ -1,15 +1,21 @@
 # GitHub Issues → implementer Task.
 #
 # The trigger starts a Task on issues.labeled events where the label is
-# `conveyor:ready`, so a human still gates dispatch with a label. It uses
-# issue.body as the prompt. Use issue.title instead for terse tickets with
-# an empty body.
+# `conveyor:ready`, so a human still gates dispatch with a label. The
+# implementer reads the issue (title, body, labels, comments) itself with gh
+# from config.ISSUE_NUMBER. The prompt is the issue URL, a fallback only.
+#
+# dedupe: while a Task for the same issue is active, another label event
+# creates nothing (ADR-0009). A terminal Task never blocks a new run.
 apiVersion: openconveyor.ai/v1alpha1
 kind: ClusterTriggerClass
 metadata:
   name: github-issues-implementer
 spec:
   path: /github/issues
+  dedupe:
+    uniqueBy:
+      - openconveyor.ai/issue-number
   signature:
     header: X-Hub-Signature-256
     algorithm: sha256
@@ -42,12 +48,15 @@ spec:
       memory: 1Gi
       timeout: 30m
     mappings:
-      - from: issue.body
+      - from: issue.html_url
         to: prompt
-        default: "See issue — no body supplied"
+        default: "See issue — no URL supplied"
       # The controller projects config.* values into the agent container as
       # env vars. $TARGET_REPO and $TARGET_BRANCH make the implementer clone
-      # the repo and open a PR. Without them the agent runs prompt-only.
+      # the repo and open a PR. $ISSUE_NUMBER selects the issue that the
+      # implementer reads and closes with the PR.
+      - from: issue.number
+        to: config.ISSUE_NUMBER
       - from: repository.clone_url
         to: config.TARGET_REPO
       - from: repository.default_branch

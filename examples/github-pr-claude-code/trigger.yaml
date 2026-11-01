@@ -9,12 +9,19 @@
 # a single payload field). If you need a custom rubric per PR, put it in the
 # PR body. Then switch the prompt mapping to pull_request.body. The reviewer
 # agent extracts the PR URL from the prompt in both cases.
+#
+# dedupe: while a review Task for the same PR is active, another label event
+# creates nothing (ADR-0009). The implementer removes and adds the label
+# after each iteration, which starts a new review.
 apiVersion: openconveyor.ai/v1alpha1
 kind: ClusterTriggerClass
 metadata:
   name: github-pr-reviewer
 spec:
   path: /github/pull-request
+  dedupe:
+    uniqueBy:
+      - openconveyor.ai/pr-number
   signature:
     header: X-Hub-Signature-256
     algorithm: sha256

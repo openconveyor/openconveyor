@@ -1,0 +1,73 @@
+# GitHub Pull Requests → implementer Task in iterate mode.
+#
+# The trigger starts a Task on pull_request.labeled events where the label is
+# `conveyor:iterate`. The implementer then checks out the PR, addresses the
+# unresolved review threads and the new comments, pushes to the same branch,
+# and replies on each thread that it addressed. It removes `conveyor:iterate`
+# again, so that you can apply it for the next round, and removes and adds
+# `conveyor:review`, so that the reviewer trigger starts a new review.
+#
+# config.PR_NUMBER selects iterate mode. The prompt is the PR URL, a fallback
+# only. dedupe: while an iteration for the same PR is active, another label
+# event creates nothing (ADR-0009).
+#
+# The adapter serves one ClusterTriggerClass for each path. The reviewer
+# class already has /github/pull-request, so this class has its own path, and
+# GitHub needs a separate webhook for it.
+apiVersion: openconveyor.ai/v1alpha1
+kind: ClusterTriggerClass
+metadata:
+  name: github-pr-iterate
+spec:
+  path: /github/pull-request-iterate
+  dedupe:
+    uniqueBy:
+      - openconveyor.ai/pr-number
+  signature:
+    header: X-Hub-Signature-256
+    algorithm: sha256
+    prefix: "sha256="
+    secretRef:
+      name: github-webhook
+      key: secret
+  filters:
+    - path: action
+      equals: labeled
+    - path: label.name
+      equals: "conveyor:iterate"
+  task:
+    namespace: conveyor-tasks
+    generateNamePrefix: gh-iterate-
+    agent:
+      ref: claude-code-implementer
+    permissions:
+      secrets:
+        - github-token
+      egress:
+        - api.github.com
+        - github.com
+    # The controller deletes the Task a day after it finishes, so
+    # webhook-driven Tasks do not accumulate.
+    ttlSecondsAfterFinished: 86400
+    resources:
+      cpu: "1"
+      memory: 1Gi
+      timeout: 30m
+    mappings:
+      - from: pull_request.html_url
+        to: prompt
+        default: "No pull_request.html_url in payload — cannot iterate"
+      - from: pull_request.number
+        to: config.PR_NUMBER
+      - from: repository.clone_url
+        to: config.TARGET_REPO
+      - from: pull_request.base.ref
+        to: config.TARGET_BRANCH
+        default: main
+      - from: repository.full_name
+        to: annotations.openconveyor.ai/repo
+      - from: pull_request.number
+        to: labels.openconveyor.ai/pr-number
+      - from: sender.login
+        to: annotations.openconveyor.ai/requested-by
+        default: unknown
