@@ -1,0 +1,15 @@
+# kind cluster for the phone-workflow stack. kind cannot change the port
+# mappings of a running cluster, so the mapping is here, before
+# `kind create cluster`. The NodePort Service conveyor-trigger
+# (overlays/kind) listens on 30090 in the node container. kind maps it to
+# 127.0.0.1:9090 on the host, and Tailscale Funnel forwards the public
+# HTTPS URL to that address.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30090
+        hostPort: 9090
+        listenAddress: "127.0.0.1"
+        protocol: TCP

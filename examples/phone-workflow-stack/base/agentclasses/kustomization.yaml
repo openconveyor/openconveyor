@@ -1,0 +1,8 @@
+# The three reference agent classes. release/kustomization.yaml patches the
+# image of each class to AGENT_IMAGE_PREFIX and AGENT_TAG (default: VERSION).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - implementer.yaml
+  - reviewer.yaml
+  - reporter.yaml

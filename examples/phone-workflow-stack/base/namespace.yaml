@@ -1,0 +1,5 @@
+# The namespace of the Tasks. The trigger classes create their Tasks here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: conveyor-tasks

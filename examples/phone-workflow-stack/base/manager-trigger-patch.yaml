@@ -1,0 +1,25 @@
+# Turns on the webhook trigger adapter on port 9090.
+#
+# A strategic merge patch replaces the whole `args` list, so the list repeats
+# the three arguments of the release manifest and adds the trigger flag.
+# Compare it with the manager Deployment of install.yaml when you change
+# VERSION. `ports` merges by containerPort.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conveyor-controller-manager
+  namespace: conveyor-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          args:
+            - --metrics-bind-address=:8443
+            - --leader-elect
+            - --health-probe-bind-address=:8081
+            - --trigger-bind-address=:9090
+          ports:
+            - name: trigger
+              containerPort: 9090
+              protocol: TCP
