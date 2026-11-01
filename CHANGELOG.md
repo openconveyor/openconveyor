@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Examples:** `examples/phone-workflow-stack/` (#124): one `make install`
+  puts the GitHub flow on a kind cluster: the release `install.yaml` of
+  `VERSION` with the trigger adapter on (strategic merge patch for the flag
+  and the port), the three agent classes pinned to `VERSION`, the three
+  GitHub trigger classes with dedupe, `conveyor-tasks`, one
+  `secretGenerator` per Secret from gitignored files, and a NodePort Service
+  on 30090 for Tailscale Funnel. Scripts check the Secret files (present,
+  mode 600, no trailing newline), create the labels, register the three
+  webhooks idempotently and give an empty repository its first commit. The
+  README lists the manual steps (PAT, Tailscale plan/approval/operator,
+  funnel, re-ping after a cold start).
 - **Examples:** GitHub trigger examples v2 (#122). The issues trigger maps
   `issue.number` to `config.ISSUE_NUMBER`, uses `issue.html_url` as the
   fallback prompt and dedupes on `openconveyor.ai/issue-number`; the PR
