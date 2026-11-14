@@ -54,7 +54,7 @@ The trigger classes come from the examples
 | Variable | Default | Meaning |
 |---|---|---|
 | `KUBE_CONTEXT` | `kind-conveyor-dev` | The kube context for `install` and `uninstall`. |
-| `VERSION` | `latest` | The release of `install.yaml` and of the agent images. The stack needs v0.4.0 or later: older CRDs have no `dedupe` field. |
+| `VERSION` | `v0.4.0` | The release of `install.yaml` and of the agent images. `latest` follows the newest release. The stack needs v0.4.0 or later: older CRDs have no `dedupe` field. |
 | `KIND_CLUSTER` | `conveyor-dev` | The name of the kind cluster. |
 | `INSTALL_YAML` | the release URL of `VERSION` | A URL or a local file, for example `../../dist/install.yaml` from `make build-installer`. |
 | `AGENT_IMAGE_PREFIX`, `AGENT_TAG` | `ghcr.io/openconveyor`, `VERSION` | The agent images, for a local build that you load into kind. |

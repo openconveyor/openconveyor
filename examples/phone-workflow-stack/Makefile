@@ -9,8 +9,8 @@
 # The kube context. The default is the context of `make kind-up`.
 KUBE_CONTEXT ?= kind-$(KIND_CLUSTER)
 # The release that pins install.yaml and the agent images. "latest" follows
-# the newest GitHub release.
-VERSION ?= latest
+# the newest GitHub release; the stack needs v0.4.0 or later.
+VERSION ?= v0.4.0
 
 KIND_CLUSTER ?= conveyor-dev
 KIND_NODE_IMAGE ?= kindest/node:v1.36.4

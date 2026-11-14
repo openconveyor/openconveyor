@@ -111,7 +111,7 @@ kind: ClusterAgentClass
 metadata:
   name: claude-code-implementer
 spec:
-  image: ghcr.io/openconveyor/agent-claude-implementer:v0.2.1
+  image: ghcr.io/openconveyor/agent-claude-implementer:v0.4.0
   imagePullPolicy: IfNotPresent
   inputs:
     prompt:
