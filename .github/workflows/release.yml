@@ -79,7 +79,7 @@ jobs:
           provenance: true
           sbom: true
 
-      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       # Keyless: the signature is bound to this workflow's OIDC identity
       # (repo + workflow path + tag ref) and recorded in Rekor. Signing the
