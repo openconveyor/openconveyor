@@ -21,22 +21,27 @@ long-lived pod gives the agent much more than one Task needs. A hostile
 prompt or a compromised dependency can then use all of it.
 
 OpenConveyor gives each agent only what its Task declares, and the API
-server enforces that limit.
+server enforces that limit. The thick lines show what an agent gets on
+a laptop. The dotted lines show what the same agent gets in a Task.
 
 ```mermaid
 flowchart LR
-    subgraph before["Agent on a laptop or a CI runner"]
-        a1[Agent] --> e1[All environment variables]
-        a1 --> n1[All network hosts]
-        a1 --> k1[Ambient cluster credentials]
-        a1 --> t1[No time limit]
+    laptop["Agent on a laptop<br/>or a CI runner"]
+    task["Agent in a Task"]
+    subgraph reach["What the agent can use"]
+        creds[Credentials]
+        net[Network]
+        api[Cluster API]
+        time[Run time]
     end
-    subgraph after["Agent in a Task"]
-        a2[Agent] --> e2[Declared Secrets as files]
-        a2 --> n2[Declared hosts on port 443]
-        a2 --> k2[No ServiceAccount token]
-        a2 --> t2[Mandatory timeout]
-    end
+    laptop ===|all environment variables| creds
+    laptop ===|all hosts| net
+    laptop ===|ambient kubeconfig| api
+    laptop ===|no limit| time
+    creds -.-|declared Secrets only| task
+    net -.-|declared hosts, port 443| task
+    api -.-|no token| task
+    time -.-|mandatory timeout| task
 ```
 
 Hosted runners tie you to the agent and the cloud of one vendor.
