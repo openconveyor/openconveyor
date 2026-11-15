@@ -8,94 +8,107 @@
 [![Status](https://img.shields.io/badge/status-alpha-orange.svg)](#status-and-roadmap)
 [![Website](https://img.shields.io/badge/website-openconveyor.ai-0A66C2.svg)](https://openconveyor.ai)
 
-OpenConveyor is a Kubernetes operator. You describe one unit of agent
-work in a `Task` resource. The Task names the agent image, the prompt,
-and the exact Secrets, network hosts and cluster API verbs that the
-agent can use. The controller runs that Task once as a hardened Job.
-The controller derives the ServiceAccount, the NetworkPolicy and the
-mounted Secrets from the Task and from nothing else. When you delete
-the Task, Kubernetes deletes everything that the Task created.
+OpenConveyor is a Kubernetes operator. One `Task` resource names an
+agent, a prompt, and the Secrets, hosts and API verbs that the agent
+can use. The controller runs the agent once as a hardened Job that has
+those permissions and no others.
 
 ## Why it exists
 
-A coding agent is only useful when it holds real credentials. It needs
-a model API key, a token that can push branches and open pull
-requests, and sometimes a few cluster permissions. The usual places to
-run one are a laptop, a CI runner or a long-lived pod. Each of them
-gives the agent far more than one task needs. The agent can reach every
-host on the network, read every environment variable, and run until
-somebody notices. A hostile prompt or a compromised dependency can
-trick the agent, and then the attacker inherits all of that.
+A coding agent is only useful when it holds real credentials: a model
+API key and a token that can push branches. A laptop, a CI runner or a
+long-lived pod gives the agent much more than one Task needs. A hostile
+prompt or a compromised dependency can then use all of it.
 
-Each existing option covers a different need. Hosted runners from a
-model vendor tie you to that vendor's agent and cloud.
-`kubernetes-sigs/agent-sandbox` targets long-lived interactive
-workspaces with gVisor or Kata isolation. That is more machinery than
-a one-shot job needs
-([ADR-0002](docs/adr/0002-build-own-sandbox.md)). OpenConveyor fills
-the gap between them. It runs one-shot agent Jobs on the cluster you
-have, including a single-node k3s box, with any agent image and any
-trigger.
+OpenConveyor gives each agent only what its Task declares, and the API
+server enforces that limit. The thick lines show what an agent gets on
+a laptop. The dotted lines show what the same agent gets in a Task.
 
-The API server enforces a set of defaults on every run, and these
-defaults make it safe. The [Security model](#security-model) section
-lists them.
+```mermaid
+flowchart LR
+    laptop["Agent on a laptop<br/>or a CI runner"]
+    task["Agent in a Task"]
+    subgraph reach["What the agent can use"]
+        creds[Credentials]
+        net[Network]
+        api[Cluster API]
+        time[Run time]
+    end
+    laptop ===|all environment variables| creds
+    laptop ===|all hosts| net
+    laptop ===|ambient kubeconfig| api
+    laptop ===|no limit| time
+    creds -.-|declared Secrets only| task
+    net -.-|declared hosts, port 443| task
+    api -.-|no token| task
+    time -.-|mandatory timeout| task
+```
+
+Hosted runners tie you to the agent and the cloud of one vendor.
+`kubernetes-sigs/agent-sandbox` targets long-lived workspaces and needs
+gVisor or Kata. OpenConveyor runs one-shot agents on the cluster you
+have, including single-node k3s
+([ADR-0002](docs/adr/0002-build-own-sandbox.md)).
 
 ## How it works
 
+A trigger creates a `Task`. The controller turns the Task into a fixed
+set of objects that the Task owns, and the Job is the last one.
+
+```mermaid
+flowchart LR
+    trig["Trigger: webhook, CronJob, kubectl, slash command"] -->|creates| task[Task]
+    cac[ClusterAgentClass] -.->|image and baseline permissions| ctrl
+    task --> ctrl[Controller]
+    ctrl -->|creates and owns| sa[ServiceAccount]
+    ctrl --> np[NetworkPolicy]
+    ctrl --> cm[Prompt ConfigMap]
+    ctrl --> job[Job]
+    job --> pod[Agent pod]
+    np -.->|limits| pod
+    pod -->|declared hosts only| ext["Model API, GitHub"]
 ```
- trigger                      Task CR                   TaskReconciler
- (GitHub, Linear, cron,  ──▶  (kubectl apply)      ──▶  (conveyor controller)
-  slash command, script)                                        │
-                                                                │ creates and owns
-                                                                ▼
-                                                  ┌───────────────────────────┐
-                                                  │ Job running the agent     │
-                                                  │  own ServiceAccount       │
-                                                  │  own NetworkPolicy        │
-                                                  │  declared Secrets as files│
-                                                  └───────────────────────────┘
+
+The agent runs once. It reports a Result when it exits, and the
+controller stores that Result in the Task status.
+
+```mermaid
+sequenceDiagram
+    participant T as Trigger
+    participant K as Kubernetes
+    participant C as Controller
+    participant A as Agent pod
+    participant X as Declared hosts
+    T->>K: create Task
+    K->>C: reconcile Task
+    C->>K: create ServiceAccount and NetworkPolicy
+    C->>K: create Job
+    K->>A: start pod
+    A->>X: call model API, push branch, open pull request
+    A->>K: write Result to termination message, exit
+    C->>K: set phase and Result in Task status
+    C->>K: delete Terminal Task after TTL
 ```
 
-1. **Something creates a `Task`.** A webhook, a CronJob, a shell
-   script or a slash command in your editor. Anything that can
-   `kubectl apply` a Task is a trigger
-   ([ADR-0003](docs/adr/0003-triggers-out-of-process.md)).
-2. **The controller resolves the agent.** The Task names a
-   `ClusterAgentClass`, which supplies the container image and the
-   baseline Secrets and egress every run of that agent needs. The
-   controller merges the Task's own permissions with that baseline.
-3. **The controller creates the policy objects first.** It creates a
-   dedicated ServiceAccount with token automount disabled and a
-   NetworkPolicy. It creates a Role and a RoleBinding only when the
-   Task declares `permissions.rbac`. The NetworkPolicy always lands
-   before the Job, because some CNIs leave a short default-allow window
-   for pods that start before their policy exists.
-4. **The Job runs once.** The controller mounts the prompt at
-   `/task/prompt` and each declared Secret at
-   `/run/secrets/<name>/<key>`. The pod runs under the Pod Security
-   Standards "restricted" profile. `timeout` becomes
-   `activeDeadlineSeconds` and `backoffLimit` is 0.
-5. **Status follows the Job.** `status.phase` moves from Pending to
-   Running and ends in Completed, Failed or TimedOut. Conditions and
-   Kubernetes Events carry the detail, so `kubectl describe task`
-   tells the whole story.
-   [`docs/status-reference.md`](docs/status-reference.md) lists every
-   phase, reason and Event.
-6. **The Task goes away when you say so.** Set
-   `spec.ttlSecondsAfterFinished` on the Task, or `--task-ttl-seconds`
-   on the controller, and the controller deletes a finished Task after
-   that delay. Unset at both levels keeps the Task forever.
+- **Triggers are outside the controller.** Anything that can create a
+  Task is a trigger
+  ([ADR-0003](docs/adr/0003-triggers-out-of-process.md)).
+- **Policy comes first.** The controller creates the NetworkPolicy
+  before the Job, so no pod starts without its policy.
+- **There are no retries.** `backoffLimit` is 0 and `timeout` becomes
+  `activeDeadlineSeconds`.
+- **Status follows the Job.** The phase goes from Pending to Running,
+  then to Completed, Failed or TimedOut
+  ([status reference](docs/status-reference.md)).
+- **One delete removes everything.** Each object has an owner reference
+  to the Task and the label `openconveyor.ai/task=<name>`.
 
-Every object the controller creates has an owner reference to the
-Task and the label `openconveyor.ai/task=<name>`. One `kubectl get -l`
-shows the whole footprint of a run, and one `kubectl delete task`
-removes it.
+[`docs/architecture.md`](docs/architecture.md) has the full reconcile
+flow and the code map.
 
-### The three resources
+## The three resources
 
-**`Task`** is what most users touch. It is in a namespace and
-describes one run:
+**`Task`** is in a namespace and is the resource that most users write:
 
 ```yaml
 apiVersion: openconveyor.ai/v1alpha1
@@ -117,171 +130,132 @@ spec:
     cpu:     "1"
     memory:  1Gi
     timeout: 30m
-  ttlSecondsAfterFinished: 86400   # optional: delete the Task a day after it finishes
+  ttlSecondsAfterFinished: 86400   # optional: delete the Task a day after it ends
 ```
 
-**`ClusterAgentClass`** describes an agent: an image, where it expects
-the prompt, and what every run of it requires. Any container that
-reads `/task/prompt` and exits is a valid agent. The repo ships
-reference classes for an implementer, a reviewer and a reporter built
-on Claude Code ([`config/samples/`](config/samples/)).
+**`ClusterAgentClass`** describes an agent: an image, the path where it
+reads the prompt, and the permissions that each Task of that class
+needs. Any container that reads the prompt and exits is a valid agent.
+The repo ships three reference agents built on Claude Code: an
+implementer, a reviewer and a reporter
+([`config/samples/`](config/samples/)).
 
-**`ClusterTriggerClass`** configures the optional built-in webhook
-adapter. It sets an HTTP path, an HMAC signature to verify, payload
-filters, and a Task template to fill from the payload. It is the only
-trigger that is in the OpenConveyor binary.
+**`ClusterTriggerClass`** configures the optional webhook adapter in
+the controller binary. It sets an HTTP path, an HMAC signature, payload
+filters, a Task template and an optional dedupe rule.
+
+[`docs/plugin-authoring.md`](docs/plugin-authoring.md) describes the
+agent contract and all fields of the two classes.
 
 ## Quick start
 
-You need `kubectl` and a Kubernetes 1.29+ cluster. The CEL validation
-rules on the CRDs require version 1.29. You also need an Anthropic API
-key. The sample Task also declares a `github-token` Secret, because the
-implementer agent mounts it for the repository flows in
-[`examples/`](examples/). Any non-empty value works for the smoke test
-below.
+You need `kubectl`, a Kubernetes 1.29+ cluster and an Anthropic API
+key. The sample Task also mounts a `github-token` Secret. Any non-empty
+value works for this smoke test.
 
 ```sh
-# 1. Install CRDs and the controller into conveyor-system.
-kubectl apply -f https://github.com/openconveyor/openconveyor/releases/download/v0.2.1/install.yaml
+# 1. Install the CRDs and the controller into conveyor-system.
+kubectl apply -f https://github.com/openconveyor/openconveyor/releases/download/v0.4.0/install.yaml
 
-# 2. Create the Task namespace and the Secrets the sample Task mounts.
-#    Secrets are projected as files at /run/secrets/<name>/<key>; the
-#    reference agents export them as ANTHROPIC_API_KEY / GITHUB_TOKEN.
+# 2. Create the Task namespace and the Secrets that the sample Task mounts.
 kubectl create namespace conveyor-tasks
 kubectl -n conveyor-tasks create secret generic anthropic-api-key \
   --from-literal=key="$ANTHROPIC_API_KEY"
 kubectl -n conveyor-tasks create secret generic github-token \
   --from-literal=token="${GITHUB_TOKEN:-unused}"
 
-# 3. Apply the sample AgentClasses and a Task, then watch it run.
-kubectl apply -k https://github.com/openconveyor/openconveyor//config/samples?ref=v0.2.1
+# 3. Apply the sample AgentClasses and a Task, then watch the Task.
+kubectl apply -k "https://github.com/openconveyor/openconveyor//config/samples?ref=v0.4.0"
 kubectl -n conveyor-tasks get tasks -w
 ```
 
 The Task goes from `Pending` to `Running` to `Completed` in about a
-minute. The first run pulls the agent image, so it takes longer. Read
-the agent output with `kubectl -n conveyor-tasks logs job/task-sample`.
-Run `kubectl -n conveyor-tasks describe task task-sample` to see the
-Events. Every phase and reason is in
-[`docs/status-reference.md`](docs/status-reference.md). The
-[shared prerequisites](examples/README.md#shared-prerequisites) in
-`examples/` describe the same Secrets for the full examples.
+minute. Read the agent output with
+`kubectl -n conveyor-tasks logs job/task-sample`. Read the Events with
+`kubectl -n conveyor-tasks describe task task-sample`.
 
-**Helm.** The release workflow publishes the chart as an OCI artifact
-and attaches it to each release as a `.tgz`. The chart installs the
-CRDs and keeps them on uninstall unless you set `crd.keep=false`.
-
-```sh
-helm install conveyor oci://ghcr.io/openconveyor/charts/conveyor \
-  --version 0.2.1 \
-  --namespace conveyor-system --create-namespace
-```
-
-**From source.** `make install` applies the CRDs and `make run` runs
-the controller against your current kubeconfig. To deploy your own
-build, set `IMG` and run `make docker-build docker-push deploy`.
-
-**Webhook triggers.** Start the manager with
-`--trigger-bind-address=:9090` to enable the adapter. It reads
-`ClusterTriggerClass` objects and their signing Secrets from the
-namespace given by `--trigger-namespace` (default `conveyor-system`).
-
-**Controller flags.**
-
-| Flag | Default | Helm value | What it does |
-|---|---|---|---|
-| `--trigger-bind-address` | blank (disabled) | none | Starts the webhook trigger adapter on this address. Use it with `--trigger-namespace`, the namespace that holds the HMAC Secrets. |
-| `--egress-refresh-interval` | `5m` | none | Re-resolves the egress hostnames while a Task runs, so the NetworkPolicy follows DNS changes. `0` disables the refresh. |
-| `--job-ttl-seconds` | `3600` | `manager.jobTTLSeconds` | Kubernetes keeps a finished Job and its logs for this many seconds. The minimum is `1`. The controller refuses `0`, because the pod can then disappear before the controller reads the Result. |
-| `--task-ttl-seconds` | unset | `manager.taskTTLSeconds` | The controller deletes a terminal Task after this many seconds. The Task's own `spec.ttlSecondsAfterFinished` wins. Unset at both levels keeps the Task. |
+[`docs/installation.md`](docs/installation.md) covers Helm, a build
+from source, the webhook adapter and the controller flags.
 
 ## Examples
 
-The reconciler, the AgentClasses and the Task shape are identical in
-every example. Only the trigger changes.
+The controller, the AgentClasses and the Task shape are identical in
+each example. Only the trigger changes.
 
-| Example | Trigger | What it shows |
+| Example | Trigger | Result |
 |---|---|---|
-| [`phone-workflow-stack/`](examples/phone-workflow-stack/) | GitHub webhooks through Tailscale Funnel | One `make install` for the whole GitHub flow on kind; see the [phone workflow](docs/phone-workflow.md) |
+| [`phone-workflow-stack/`](examples/phone-workflow-stack/) | GitHub webhooks through Tailscale Funnel | The full GitHub flow on kind with one `make install` ([tutorial](docs/phone-workflow.md)) |
 | [`github-issues-claude-code/`](examples/github-issues-claude-code/) | GitHub Issues webhook | Label an issue, get a PR |
-| [`github-pr-claude-code/`](examples/github-pr-claude-code/) | GitHub Pull Requests webhook | Label a PR, get a review comment |
-| [`github-pr-iterate/`](examples/github-pr-iterate/) | GitHub Pull Requests webhook | Label a PR `conveyor:iterate`, get the review addressed on the same branch |
-| [`linear-claude-code/`](examples/linear-claude-code/) | Linear workflow-state webhook | SaaS tracker as the trigger |
-| [`cronjob-reporter/`](examples/cronjob-reporter/) | Kubernetes CronJob | Scheduled report posted as an issue comment |
-| [`claude-code-slash-dispatch/`](examples/claude-code-slash-dispatch/) | Claude Code `/conveyor` command | Your laptop is the trigger, no server needed |
+| [`github-pr-claude-code/`](examples/github-pr-claude-code/) | GitHub Pull Requests webhook | Label a PR, get a review |
+| [`github-pr-iterate/`](examples/github-pr-iterate/) | GitHub Pull Requests webhook | Label a PR, get the review addressed on the same branch |
+| [`linear-claude-code/`](examples/linear-claude-code/) | Linear webhook | Move an issue, get a PR |
+| [`cronjob-reporter/`](examples/cronjob-reporter/) | Kubernetes CronJob | A scheduled report as an issue comment |
+| [`claude-code-slash-dispatch/`](examples/claude-code-slash-dispatch/) | Claude Code `/conveyor` command | A Task from your laptop, with no server |
 
 ## Security model
 
-Four guarantees, each enforced by a Kubernetes primitive rather than
-by documentation or by the agent image:
+Each Task has four guarantees. A Kubernetes primitive enforces each
+one, not the documentation and not the agent image.
 
-1. **Default-deny egress.** No declared egress means no network at
-   all, including DNS, so a prompt-injected agent cannot exfiltrate to
-   a host nobody approved. The controller resolves the declared hosts
-   at reconcile time and opens them on port 443 only, unless
-   `egressPorts` says otherwise.
-2. **Default-zero RBAC.** The controller does not mount the
-   ServiceAccount token and gives the ServiceAccount no bindings unless
-   the Task declares `permissions.rbac`. A compromised agent has no
-   ambient path to the cluster API.
-3. **Declared Secrets only.** Mounted as read-only files, never as
-   environment variables, so a child process that dumps its
-   environment leaks nothing.
-4. **Hard kill.** `timeout` is mandatory and becomes
-   `activeDeadlineSeconds`, and there are no retries, so a runaway
-   agent cannot burn tokens indefinitely.
+```mermaid
+flowchart LR
+    sec[Declared Secrets] -->|read-only files| pod[Agent pod]
+    pod -->|port 443| ok[Declared hosts]
+    pod --x|blocked| other[All other hosts]
+    pod --x|blocked| api[Cluster API]
+    timeout[Timeout] -->|stops| pod
+```
 
-The pod itself runs as non-root with a read-only root filesystem, all
-capabilities dropped and the default seccomp profile. The threat
-model, what is deliberately out of scope, and commands to verify each
-guarantee from inside a pod are in
-[`docs/security-model.md`](docs/security-model.md).
-[`docs/adr/`](docs/adr/) records the reasoning behind each decision.
+| Guarantee | How Kubernetes enforces it |
+|---|---|
+| Default-deny egress | One NetworkPolicy for each Task. An empty `egress` list gives zero rules, also no DNS. |
+| No RBAC | No ServiceAccount token and no bindings, unless the Task declares `permissions.rbac`. |
+| Secrets as files | Read-only files at `/run/secrets/<name>/<key>`, never environment variables. |
+| Hard timeout | `timeout` is mandatory and becomes `activeDeadlineSeconds`. |
+
+The pod also runs as non-root with a read-only root filesystem, no
+capabilities and the default seccomp profile.
+[`docs/security-model.md`](docs/security-model.md) has the threat
+model, the limits, and commands that verify each guarantee from inside
+a pod.
 
 ## Status and roadmap
 
-OpenConveyor is alpha. The current release is v0.2.1. Unit and envtest
-integration tests cover the security baseline and the trigger adapter.
-The controller exports Prometheus metrics for phase transitions,
-reconcile errors, run duration and webhook outcomes. The APIs can
-change before 1.0.
+OpenConveyor is alpha. The current release is v0.4.0. The API is
+`v1alpha1` and can change before version 1. Unit tests, envtest
+tests and a kind e2e suite cover the guarantees and the trigger
+adapter. Shell tests cover the reference agents. The controller
+exports Prometheus metrics.
 
-Next up:
+Next:
 
-- A `conveyor-git` helper that gives reference agents one interface
-  over the GitHub, GitLab and Forgejo CLIs.
+- A `conveyor-git` helper that gives the reference agents one interface
+  to the GitHub, GitLab and Forgejo CLIs.
 - GitLab and Forgejo trigger examples.
-- Reference agent images for other models, built on the
-  `AgentRef.config` projection that shipped in v0.2.0.
+- Reference agent images for other models.
+
+## Documentation
+
+| Document | Content |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | The reconcile flow and the package that owns each part |
+| [`docs/security-model.md`](docs/security-model.md) | The four guarantees, the threat model and the supply chain |
+| [`docs/status-reference.md`](docs/status-reference.md) | Each phase, `Ready` reason and Event of a Task |
+| [`docs/plugin-authoring.md`](docs/plugin-authoring.md) | How to write an agent or a trigger |
+| [`docs/installation.md`](docs/installation.md) | Helm, source build, webhook adapter, controller flags |
+| [`docs/enterprise-auth.md`](docs/enterprise-auth.md) | Short-lived credentials with External Secrets |
+| [`docs/adr/`](docs/adr/) | The accepted decisions and their reasons |
+| [`GLOSSARY.md`](GLOSSARY.md) | The terms of the project |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | The development commands and the pull request rules |
 
 ## Community
 
 - **Website:** [openconveyor.ai](https://openconveyor.ai)
 - **Issues and discussions:** GitHub Issues on this repository
-- **Security:** please report vulnerabilities through a
-  [GitHub security advisory][sec] instead of a public issue
+- **Security:** report a vulnerability through a
+  [GitHub security advisory][sec], not a public issue
 
 [sec]: https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing/privately-reporting-a-security-vulnerability
-
-## Contributing
-
-Issues, design critique and PRs are welcome. Useful reading before
-you start:
-
-- [`docs/architecture.md`](docs/architecture.md) explains the
-  reconciliation flow and which package owns what.
-- [`docs/status-reference.md`](docs/status-reference.md) lists every
-  phase, `Ready` reason and Event that a Task can report, for triggers
-  and dashboards.
-- [`docs/plugin-authoring.md`](docs/plugin-authoring.md) describes the
-  agent contract, the `ClusterAgentClass` and `ClusterTriggerClass`
-  fields, and the environment variables of the reference agents.
-- [`docs/enterprise-auth.md`](docs/enterprise-auth.md) shows how to
-  give agents short-lived credentials with External Secrets.
-- [`docs/adr/`](docs/adr/) holds the required decisions. A PR that
-  argues against one must propose a superseding ADR.
-- [`AGENTS.md`](AGENTS.md) lists the kubebuilder scaffolding
-  conventions the repo follows.
 
 ## License
 
