@@ -216,8 +216,8 @@ a pod.
 
 ## Status and roadmap
 
-OpenConveyor is alpha. The current release is v0.4.0 and the API is
-`v1alpha1`, so the API can change before 1.0. Unit tests, envtest
+OpenConveyor is alpha. The current release is v0.4.0. The API is
+`v1alpha1` and can change before version 1. Unit tests, envtest
 tests and a kind e2e suite cover the guarantees and the trigger
 adapter. Shell tests cover the reference agents. The controller
 exports Prometheus metrics.
